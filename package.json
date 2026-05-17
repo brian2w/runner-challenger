@@ -1,0 +1,20 @@
+{
+  "name": "runner-challenger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord-first runner accountability MVP with extensible core services.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/**/*.test.js",
+    "dry-run": "npm run build && node dist/src/dryRun.js",
+    "start": "node dist/src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.26.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "typescript": "^6.0.3"
+  }
+}
