@@ -31,6 +31,7 @@ export interface Member {
   workspaceId: string;
   discordUserId: string;
   displayName: string;
+  isBot?: boolean;
   connectedStravaAthleteId?: string;
   createdAt: string;
 }
@@ -154,6 +155,14 @@ export interface LeaderboardRow {
   percentComplete: number;
   rank: number;
   hasGoal: boolean;
+}
+
+export interface GroupProgressSummary {
+  completedKm: number;
+  effectiveGoalKm: number;
+  percentComplete: number;
+  membersWithGoals: number;
+  totalMembers: number;
 }
 
 export interface MemberMonthStatus {

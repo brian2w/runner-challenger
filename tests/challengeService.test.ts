@@ -125,6 +125,81 @@ describe("ChallengeService", () => {
     equal(leaderboard[0]?.percentComplete, 5);
   });
 
+  it("excludes bot accounts from leaderboard rows and group totals", async () => {
+    const fixture = await createFixture();
+    const bot = await fixture.service.registerMember({
+      workspaceId: fixture.workspace.id,
+      discordUserId: "discord-bot",
+      displayName: "Run Club Ref",
+      isBot: true,
+    });
+
+    await fixture.service.setGoal({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.john.id,
+      baseGoalKm: 40,
+    });
+    await fixture.service.setGoal({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.sarah.id,
+      baseGoalKm: 40,
+    });
+    await fixture.service.submitManualRun({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.john.id,
+      distanceKm: 20,
+      runDate: "2026-04-02",
+      evidenceUrl: "https://cdn.example/john-20k.png",
+    });
+
+    const leaderboard = await fixture.service.getLeaderboard({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+    });
+    const group = await fixture.service.getGroupProgress({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+    });
+
+    equal(leaderboard.some((row) => row.memberId === bot.id), false);
+    equal(leaderboard.some((row) => row.displayName === "Run Club Ref"), false);
+    equal(group.completedKm, 20);
+    equal(group.effectiveGoalKm, 80);
+    equal(group.membersWithGoals, 2);
+    equal(group.totalMembers, 3);
+  });
+
+  it("rejects bot accounts from participant actions", async () => {
+    const fixture = await createFixture();
+    const bot = await fixture.service.registerMember({
+      workspaceId: fixture.workspace.id,
+      discordUserId: "discord-bot",
+      displayName: "Run Club Ref",
+      isBot: true,
+    });
+
+    await rejects(() =>
+      fixture.service.setGoal({
+        workspaceId: fixture.workspace.id,
+        month: fixture.month,
+        memberId: bot.id,
+        baseGoalKm: 40,
+      }),
+      /Bot accounts cannot participate/,
+    );
+    await rejects(() =>
+      fixture.service.assignLeader({
+        workspaceId: fixture.workspace.id,
+        month: fixture.month,
+        memberId: bot.id,
+      }),
+      /Bot accounts cannot participate/,
+    );
+  });
+
   it("deduplicates Strava imports by external activity id", async () => {
     const fixture = await createFixture();
     fixture.stravaActivities.set("athlete-john", [
@@ -386,7 +461,154 @@ describe("ChallengeService", () => {
 
     ok(goalReply.includes("90km"));
     ok(runReply.includes("12km logged"));
+    ok(boardReply.includes("Group:"));
+    ok(boardReply.includes("12/90km"));
     ok(boardReply.includes("John: 12/90km"));
+  });
+
+  it("lets the assigned leader record punishments and members view them", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    const nonLeaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.sarah.id,
+      commandName: "leader-record-punishment",
+      options: {
+        member_id: fixture.mike.id,
+        note: "100 burpees",
+      },
+    });
+    const leaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "leader-record-punishment",
+      options: {
+        member_id: fixture.mike.id,
+        note: "100 burpees",
+      },
+    });
+    const selfPunishmentsReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.mike.id,
+      commandName: "punishments",
+    });
+
+    ok(nonLeaderReply.includes("assigned leader or an admin"));
+    ok(leaderReply.includes("Punishment recorded for Mike"));
+    ok(selfPunishmentsReply.includes("Mike: 100 burpees"));
+    ok(selfPunishmentsReply.includes("assigned by John"));
+  });
+
+  it("lets only the assigned leader remove punishments", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+    const punishment = await fixture.service.recordPunishment({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.mike.id,
+      assignedByMemberId: fixture.john.id,
+      note: "100 burpees",
+    });
+
+    const nonLeaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.sarah.id,
+      commandName: "leader-remove-punishment",
+      options: {
+        punishment_id: punishment.id,
+      },
+    });
+    const adminNotLeaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.sarah.id,
+      isAdmin: true,
+      commandName: "leader-remove-punishment",
+      options: {
+        punishment_id: punishment.id,
+      },
+    });
+    const leaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "leader-remove-punishment",
+      options: {
+        punishment_id: punishment.id,
+      },
+    });
+    const punishmentsReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.mike.id,
+      commandName: "punishments",
+    });
+
+    equal(nonLeaderReply, "Error: This command requires the assigned leader.");
+    equal(adminNotLeaderReply, "Error: This command requires the assigned leader.");
+    ok(leaderReply.includes("Punishment removed for Mike"));
+    ok(punishmentsReply.includes("No punishments recorded."));
+  });
+
+  it("shows leader-help text that distinguishes admin and leader permissions", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    const leaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "leader-help",
+    });
+    const adminNotLeaderReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.sarah.id,
+      isAdmin: true,
+      commandName: "leader-help",
+    });
+
+    ok(leaderReply.includes("You are the assigned leader"));
+    ok(adminNotLeaderReply.includes("only the assigned leader can remove"));
+  });
+
+  it("prompts the leader to assign punishments when a month closes with misses", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    await fixture.service.setGoal({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.sarah.id,
+      baseGoalKm: 50,
+    });
+    await fixture.service.submitManualRun({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.sarah.id,
+      distanceKm: 10,
+      runDate: "2026-04-12",
+      evidenceUrl: "https://cdn.example/sarah-10k.png",
+    });
+
+    const closeReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      isAdmin: true,
+      commandName: "admin-close-month",
+      options: {
+        month: fixture.month,
+      },
+    });
+
+    ok(closeReply.includes("Sarah: missed by 40km"));
+    ok(closeReply.includes("/leader-record-punishment member note"));
   });
 
   it("tells members to connect Strava before syncing", async () => {

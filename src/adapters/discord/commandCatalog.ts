@@ -36,6 +36,15 @@ export const slashCommands: SlashCommandDefinition[] = [
     description: "Show your current month progress against your goal.",
   },
   {
+    name: "punishments",
+    description: "Show recorded punishments for yourself or another member.",
+    options: [{ name: "member", description: "Discord member to inspect.", type: "user", required: false }],
+  },
+  {
+    name: "leader-help",
+    description: "Show commands available to the assigned leader.",
+  },
+  {
     name: "strava-connect",
     description: "Start Strava account linking.",
   },
@@ -60,6 +69,19 @@ export const slashCommands: SlashCommandDefinition[] = [
     description: "Assign the current month's leader.",
     adminOnly: true,
     options: [{ name: "member", description: "Discord member.", type: "user", required: true }],
+  },
+  {
+    name: "leader-record-punishment",
+    description: "Record a punishment as the assigned leader or server admin.",
+    options: [
+      { name: "member", description: "Member receiving the punishment.", type: "user", required: true },
+      { name: "note", description: "Punishment note.", type: "string", required: true },
+    ],
+  },
+  {
+    name: "leader-remove-punishment",
+    description: "Remove a punishment as the assigned leader.",
+    options: [{ name: "punishment_id", description: "Punishment id to remove.", type: "string", required: true }],
   },
   {
     name: "admin-override-run",

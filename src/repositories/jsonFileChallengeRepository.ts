@@ -113,6 +113,11 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
     await this.persist();
   }
 
+  override async deletePunishmentRecord(punishmentId: string): Promise<void> {
+    await super.deletePunishmentRecord(punishmentId);
+    await this.persist();
+  }
+
   override async saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void> {
     await super.saveScheduledPrompt(prompt);
     await this.persist();

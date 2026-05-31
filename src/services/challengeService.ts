@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { buildLeaderboardRows, buildMemberMonthStatuses, buildMonthlyResult, computeEffectiveGoal } from "../core/calculations.js";
+import {
+  buildGroupProgressSummary,
+  buildLeaderboardRows,
+  buildMemberMonthStatuses,
+  buildMonthlyResult,
+  computeEffectiveGoal,
+} from "../core/calculations.js";
 import { DomainError } from "../core/errors.js";
 import { addDays, isIsoDate, isIsoDateInMonth, monthCloseIso, monthStartIso, nextMonth, nowIso } from "../core/time.js";
 import type {
   CarryoverPenalty,
   DiscordWorkspace,
+  GroupProgressSummary,
   LeaderAssignment,
   LeaderboardRow,
   Member,
@@ -50,15 +57,27 @@ export class ChallengeService {
     workspaceId: string;
     discordUserId: string;
     displayName: string;
+    isBot?: boolean;
     connectedStravaAthleteId?: string;
   }): Promise<Member> {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getMemberByDiscordUserId(input.workspaceId, input.discordUserId);
     if (existing) {
+      const nextIsBot = input.isBot ?? existing.isBot;
+      const nextConnectedStravaAthleteId = input.connectedStravaAthleteId ?? existing.connectedStravaAthleteId;
+      if (
+        existing.displayName === input.displayName &&
+        existing.isBot === nextIsBot &&
+        existing.connectedStravaAthleteId === nextConnectedStravaAthleteId
+      ) {
+        return existing;
+      }
+
       const updated: Member = {
         ...existing,
         displayName: input.displayName,
-        connectedStravaAthleteId: input.connectedStravaAthleteId ?? existing.connectedStravaAthleteId,
+        isBot: nextIsBot,
+        connectedStravaAthleteId: nextConnectedStravaAthleteId,
       };
       await this.repository.saveMember(updated);
       return updated;
@@ -69,6 +88,7 @@ export class ChallengeService {
       workspaceId: input.workspaceId,
       discordUserId: input.discordUserId,
       displayName: input.displayName,
+      isBot: input.isBot,
       connectedStravaAthleteId: input.connectedStravaAthleteId,
       createdAt: nowIso(),
     };
@@ -101,7 +121,7 @@ export class ChallengeService {
 
   async assignLeader(input: { workspaceId: string; month: MonthKey; memberId: string }): Promise<LeaderAssignment> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    await this.requireMember(input.memberId, input.workspaceId);
+    await this.requireParticipantMember(input.memberId, input.workspaceId);
 
     const assignment: LeaderAssignment = {
       id: randomUUID(),
@@ -121,7 +141,7 @@ export class ChallengeService {
     baseGoalKm: number;
   }): Promise<MonthlyGoal> {
     const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
-    await this.requireMember(input.memberId, input.workspaceId);
+    await this.requireParticipantMember(input.memberId, input.workspaceId);
     if (!Number.isFinite(input.baseGoalKm) || input.baseGoalKm <= 0) {
       throw new DomainError("Goal distance must be greater than zero.");
     }
@@ -153,7 +173,7 @@ export class ChallengeService {
     evidenceUrl: string;
   }): Promise<RunSubmission> {
     const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
-    await this.requireMember(input.memberId, input.workspaceId);
+    await this.requireParticipantMember(input.memberId, input.workspaceId);
     if (!input.evidenceUrl) {
       throw new DomainError("Manual submissions require a screenshot evidence URL.");
     }
@@ -186,7 +206,7 @@ export class ChallengeService {
     memberId: string;
   }): Promise<RunSubmission[]> {
     const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
-    const member = await this.requireMember(input.memberId, input.workspaceId);
+    const member = await this.requireParticipantMember(input.memberId, input.workspaceId);
     if (!member.connectedStravaAthleteId) {
       throw new DomainError("Member has not connected a Strava athlete.");
     }
@@ -287,8 +307,8 @@ export class ChallengeService {
     note: string;
   }): Promise<PunishmentRecord> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    await this.requireMember(input.memberId, input.workspaceId);
-    await this.requireMember(input.assignedByMemberId, input.workspaceId);
+    await this.requireParticipantMember(input.memberId, input.workspaceId);
+    await this.requireParticipantMember(input.assignedByMemberId, input.workspaceId);
 
     const record: PunishmentRecord = {
       id: randomUUID(),
@@ -301,6 +321,37 @@ export class ChallengeService {
     };
     await this.repository.savePunishmentRecord(record);
     return record;
+  }
+
+  async listPunishments(input: {
+    workspaceId: string;
+    month: MonthKey;
+    memberId?: string;
+  }): Promise<PunishmentRecord[]> {
+    const challenge = await this.requireChallenge(input.workspaceId, input.month);
+    if (input.memberId) {
+      await this.requireMember(input.memberId, input.workspaceId);
+    }
+
+    const punishments = await this.repository.listPunishmentsByChallenge(challenge.id);
+    return punishments
+      .filter((punishment) => !input.memberId || punishment.memberId === input.memberId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  async removePunishment(input: {
+    workspaceId: string;
+    month: MonthKey;
+    punishmentId: string;
+  }): Promise<PunishmentRecord> {
+    const challenge = await this.requireChallenge(input.workspaceId, input.month);
+    const punishment = await this.repository.getPunishmentById(input.punishmentId);
+    if (!punishment || punishment.workspaceId !== input.workspaceId || punishment.challengeId !== challenge.id) {
+      throw new DomainError("Punishment was not found for that month.");
+    }
+
+    await this.repository.deletePunishmentRecord(input.punishmentId);
+    return punishment;
   }
 
   async closeMonth(input: { workspaceId: string; month: MonthKey }): Promise<MonthCloseSummary> {
@@ -355,6 +406,12 @@ export class ChallengeService {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
     const statuses = await this.getMemberStatuses(input.workspaceId, challenge.id);
     return buildLeaderboardRows(statuses);
+  }
+
+  async getGroupProgress(input: { workspaceId: string; month: MonthKey }): Promise<GroupProgressSummary> {
+    const challenge = await this.requireChallenge(input.workspaceId, input.month);
+    const statuses = await this.getMemberStatuses(input.workspaceId, challenge.id);
+    return buildGroupProgressSummary(statuses);
   }
 
   async getMemberStatuses(workspaceId: string, challengeId: string): Promise<MemberMonthStatus[]> {
@@ -453,6 +510,14 @@ export class ChallengeService {
     const member = await this.repository.getMemberById(memberId);
     if (!member || member.workspaceId !== workspaceId) {
       throw new DomainError("Member does not exist in that workspace.");
+    }
+    return member;
+  }
+
+  private async requireParticipantMember(memberId: string, workspaceId: string): Promise<Member> {
+    const member = await this.requireMember(memberId, workspaceId);
+    if (member.isBot) {
+      throw new DomainError("Bot accounts cannot participate in challenges.");
     }
     return member;
   }

@@ -1,4 +1,5 @@
 import type {
+  GroupProgressSummary,
   LeaderboardRow,
   Member,
   MemberMonthStatus,
@@ -32,7 +33,7 @@ export function buildMemberMonthStatuses(
   goals: MonthlyGoal[],
   submissions: RunSubmission[],
 ): MemberMonthStatus[] {
-  return members.map((member) => {
+  return members.filter((member) => !member.isBot).map((member) => {
     const goal = goals.find((candidate) => candidate.memberId === member.id);
     const completedKm = computeCompletedKm(submissions.filter((submission) => submission.memberId === member.id));
 
@@ -69,6 +70,21 @@ export function buildLeaderboardRows(statuses: MemberMonthStatus[]): Leaderboard
       rank: index + 1,
       hasGoal: status.hasGoal,
     }));
+}
+
+export function buildGroupProgressSummary(statuses: MemberMonthStatus[]): GroupProgressSummary {
+  const membersWithGoals = statuses.filter((status) => status.hasGoal);
+  const completedKm = roundKm(membersWithGoals.reduce((total, status) => total + status.completedKm, 0));
+  const effectiveGoalKm = roundKm(membersWithGoals.reduce((total, status) => total + status.effectiveGoalKm, 0));
+  const percentComplete = effectiveGoalKm === 0 ? 0 : roundKm((completedKm / effectiveGoalKm) * 100);
+
+  return {
+    completedKm,
+    effectiveGoalKm,
+    percentComplete,
+    membersWithGoals: membersWithGoals.length,
+    totalMembers: statuses.length,
+  };
 }
 
 export function buildMonthlyResult(

@@ -44,6 +44,8 @@ export interface ChallengeRepository {
   listMonthlyResultsByChallenge(challengeId: string): Promise<MonthlyResult[]>;
 
   savePunishmentRecord(record: PunishmentRecord): Promise<void>;
+  getPunishmentById(punishmentId: string): Promise<PunishmentRecord | undefined>;
+  deletePunishmentRecord(punishmentId: string): Promise<void>;
   listPunishmentsByChallenge(challengeId: string): Promise<PunishmentRecord[]>;
 
   saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void>;

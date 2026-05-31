@@ -131,6 +131,14 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
     this.punishments.set(record.id, record);
   }
 
+  async getPunishmentById(punishmentId: string): Promise<PunishmentRecord | undefined> {
+    return this.punishments.get(punishmentId);
+  }
+
+  async deletePunishmentRecord(punishmentId: string): Promise<void> {
+    this.punishments.delete(punishmentId);
+  }
+
   async listPunishmentsByChallenge(challengeId: string): Promise<PunishmentRecord[]> {
     return [...this.punishments.values()].filter((record) => record.challengeId === challengeId);
   }

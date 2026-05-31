@@ -7,7 +7,9 @@ import {
   REST,
   Routes,
   type ChatInputCommandInteraction,
+  type User,
 } from "discord.js";
+import { DomainError } from "../../core/errors.js";
 import { createMonthKeyForDate } from "../../core/time.js";
 import type { DiscordWorkspace, Member, MonthKey } from "../../core/types.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
@@ -76,6 +78,12 @@ export class RunnerChallengeDiscordBot {
       workspaceId: workspace.id,
       month: this.currentMonth(),
     });
+    await this.service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: this.config.clientId,
+      displayName: this.config.workspaceName,
+      isBot: true,
+    });
     return workspace;
   }
 
@@ -85,9 +93,13 @@ export class RunnerChallengeDiscordBot {
         await interaction.reply({ content: "Use this bot inside a Discord server.", ephemeral: true });
         return;
       }
+      if (interaction.user.bot) {
+        await interaction.reply({ content: "Bot accounts cannot participate in challenges.", ephemeral: true });
+        return;
+      }
 
       const workspace = await this.bootstrapWorkspace();
-      const actor = await this.ensureMember(workspace, interaction.user.id, interaction.user.globalName ?? interaction.user.username);
+      const actor = await this.ensureMember(workspace, interaction.user);
       const month = this.currentMonth();
 
       if (interaction.commandName === "strava-connect") {
@@ -137,7 +149,15 @@ export class RunnerChallengeDiscordBot {
         return { month: interaction.options.getString("month", true) };
       case "admin-assign-leader": {
         const user = interaction.options.getUser("member", true);
-        const member = await this.ensureMember(workspace, user.id, user.globalName ?? user.username);
+        const member = await this.ensureMember(workspace, user);
+        return { member_id: member.id };
+      }
+      case "punishments": {
+        const user = interaction.options.getUser("member");
+        if (!user) {
+          return {};
+        }
+        const member = await this.ensureMember(workspace, user);
         return { member_id: member.id };
       }
       case "admin-override-run":
@@ -146,9 +166,16 @@ export class RunnerChallengeDiscordBot {
           action: interaction.options.getString("action", true),
           distance_km: interaction.options.getNumber("distance_km") ?? undefined,
         };
+      case "leader-record-punishment": {
+        const user = interaction.options.getUser("member", true);
+        const member = await this.ensureMember(workspace, user);
+        return { member_id: member.id, note: interaction.options.getString("note", true) };
+      }
+      case "leader-remove-punishment":
+        return { punishment_id: interaction.options.getString("punishment_id", true) };
       case "admin-record-punishment": {
         const user = interaction.options.getUser("member", true);
-        const member = await this.ensureMember(workspace, user.id, user.globalName ?? user.username);
+        const member = await this.ensureMember(workspace, user);
         return { member_id: member.id, note: interaction.options.getString("note", true) };
       }
       default:
@@ -176,7 +203,12 @@ export class RunnerChallengeDiscordBot {
     });
   }
 
-  private async ensureMember(workspace: DiscordWorkspace, discordUserId: string, displayName: string): Promise<Member> {
+  private async ensureMember(workspace: DiscordWorkspace, user: User): Promise<Member> {
+    if (user.bot || user.id === this.config.clientId) {
+      throw new DomainError("Bot accounts cannot participate in challenges.");
+    }
+    const discordUserId = user.id;
+    const displayName = user.globalName ?? user.username;
     const existing = await this.repository.getMemberByDiscordUserId(workspace.id, discordUserId);
     if (existing) {
       if (existing.displayName !== displayName) {

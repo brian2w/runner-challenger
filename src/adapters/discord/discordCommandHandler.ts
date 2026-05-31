@@ -45,11 +45,15 @@ export class DiscordCommandHandler {
           return `Run accepted: ${submission.distanceKm}km logged for ${submission.runDate}.`;
         }
         case "leaderboard": {
-          const leaderboard = await this.service.getLeaderboard({
+          const request = {
             workspaceId: input.workspaceId,
             month: input.month,
-          });
-          return this.presenter.renderLeaderboard(input.month, leaderboard);
+          };
+          const [leaderboard, group] = await Promise.all([
+            this.service.getLeaderboard(request),
+            this.service.getGroupProgress(request),
+          ]);
+          return this.presenter.renderLeaderboard(input.month, leaderboard, group);
         }
         case "status": {
           const summary = await this.service.getMonthlySummary({
@@ -62,6 +66,23 @@ export class DiscordCommandHandler {
             throw new DomainError("Member status was not found.");
           }
           return this.presenter.renderMemberStatus(status);
+        }
+        case "punishments": {
+          const memberId = this.optionalString(input.options, "member_id") ?? input.actorMemberId;
+          const [punishments, members] = await Promise.all([
+            this.service.listPunishments({
+              workspaceId: input.workspaceId,
+              month: input.month,
+              memberId,
+            }),
+            this.repository.listMembersByWorkspace(input.workspaceId),
+          ]);
+          const memberNames = new Map(members.map((member) => [member.id, member.displayName]));
+          return this.presenter.renderPunishments(input.month, punishments, memberNames, memberNames);
+        }
+        case "leader-help": {
+          const isLeader = await this.isLeader(input);
+          return this.presenter.renderLeaderHelp(input.month, { isLeader, isAdmin: Boolean(input.isAdmin) });
         }
         case "strava-connect":
           return "Use /strava-connect in the live Discord bot to receive your private Strava OAuth link.";
@@ -121,8 +142,30 @@ export class DiscordCommandHandler {
           });
           return `Submission ${updated.id} updated to ${updated.distanceKm}km with status ${updated.status}.`;
         }
+        case "leader-record-punishment": {
+          await this.requireLeaderOrAdmin(input);
+          const record = await this.service.recordPunishment({
+            workspaceId: input.workspaceId,
+            month: input.month,
+            memberId: this.requireString(input.options, "member_id"),
+            assignedByMemberId: input.actorMemberId,
+            note: this.requireString(input.options, "note"),
+          });
+          const member = await this.repository.getMemberById(record.memberId);
+          return `Punishment recorded for ${member?.displayName ?? record.memberId}.`;
+        }
+        case "leader-remove-punishment": {
+          await this.requireLeader(input);
+          const punishment = await this.service.removePunishment({
+            workspaceId: input.workspaceId,
+            month: input.month,
+            punishmentId: this.requireString(input.options, "punishment_id"),
+          });
+          const member = await this.repository.getMemberById(punishment.memberId);
+          return `Punishment removed for ${member?.displayName ?? punishment.memberId}.`;
+        }
         case "admin-record-punishment": {
-          this.requireAdmin(input);
+          await this.requireLeaderOrAdmin(input);
           const record = await this.service.recordPunishment({
             workspaceId: input.workspaceId,
             month: input.month,
@@ -153,6 +196,35 @@ export class DiscordCommandHandler {
     }
   }
 
+  private async requireLeaderOrAdmin(input: DiscordCommandInput): Promise<void> {
+    if (await this.isLeaderOrAdmin(input)) {
+      return;
+    }
+    throw new DomainError("This command requires the assigned leader or an admin.");
+  }
+
+  private async requireLeader(input: DiscordCommandInput): Promise<void> {
+    if (await this.isLeader(input)) {
+      return;
+    }
+    throw new DomainError("This command requires the assigned leader.");
+  }
+
+  private async isLeaderOrAdmin(input: DiscordCommandInput): Promise<boolean> {
+    if (input.isAdmin) {
+      return true;
+    }
+    return this.isLeader(input);
+  }
+
+  private async isLeader(input: DiscordCommandInput): Promise<boolean> {
+    const summary = await this.service.getMonthlySummary({
+      workspaceId: input.workspaceId,
+      month: input.month,
+    });
+    return summary.leaderId === input.actorMemberId;
+  }
+
   private requireMonth(options: Record<string, string | number | undefined> | undefined, key: string): MonthKey {
     try {
       return parseMonthInput(this.requireString(options, key));
@@ -177,6 +249,11 @@ export class DiscordCommandHandler {
       throw new DomainError(`Missing required option: ${key}`);
     }
     return value;
+  }
+
+  private optionalString(options: Record<string, string | number | undefined> | undefined, key: string): string | undefined {
+    const value = options?.[key];
+    return typeof value === "string" && value.length > 0 ? value : undefined;
   }
 
   private requireNumber(options: Record<string, string | number | undefined> | undefined, key: string): number {
