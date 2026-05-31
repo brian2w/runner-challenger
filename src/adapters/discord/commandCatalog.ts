@@ -20,10 +20,10 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "run-submit",
-    description: "Submit a screenshot-backed run for the active month.",
+    description: "Manually log a run by entering distance/date and attaching screenshot proof.",
     options: [
       { name: "distance_km", description: "Run distance.", type: "number", required: true },
-      { name: "run_date", description: "ISO date for the run.", type: "string", required: true },
+      { name: "run_date", description: "Run date in YYYY-MM-DD format.", type: "string", required: true },
       { name: "screenshot", description: "Screenshot attachment URL.", type: "attachment", required: true },
     ],
   },
@@ -33,7 +33,7 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "status",
-    description: "Show your current progress against your goal.",
+    description: "Show your current month progress against your goal.",
   },
   {
     name: "strava-connect",
@@ -41,11 +41,11 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "strava-sync",
-    description: "Import new Strava activities for the month.",
+    description: "Import new Strava runs after connecting Strava.",
   },
   {
     name: "admin-start-month",
-    description: "Create the monthly challenge shell.",
+    description: "Create a challenge month for goal setting and run logging.",
     adminOnly: true,
     options: [{ name: "month", description: "Target month in YYYY-MM.", type: "string", required: true }],
   },

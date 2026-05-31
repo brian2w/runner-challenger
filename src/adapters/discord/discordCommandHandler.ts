@@ -138,6 +138,9 @@ export class DiscordCommandHandler {
       }
     } catch (error) {
       if (error instanceof DomainError) {
+        if (input.commandName === "strava-sync" && error.message === "Member has not connected a Strava athlete.") {
+          return "Error: Connect Strava first with /strava-connect, then run /strava-sync.";
+        }
         return `Error: ${error.message}`;
       }
       throw error;

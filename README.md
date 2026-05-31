@@ -12,17 +12,19 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 
 ## Commands
 
-- `/goal-set distance_km`
-- `/run-submit distance_km run_date screenshot`
-- `/leaderboard`
-- `/status`
-- `/strava-connect`
-- `/strava-sync`
-- `/admin-start-month month`
-- `/admin-close-month month`
-- `/admin-assign-leader member`
-- `/admin-override-run submission_id action distance_km`
-- `/admin-record-punishment member note`
+| Command | Purpose |
+| --- | --- |
+| `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
+| `/run-submit distance_km run_date screenshot` | Manually log a run by entering distance/date and attaching screenshot proof. The bot stores the screenshot URL but does not read or OCR the image. |
+| `/leaderboard` | Show current standings for the active month. |
+| `/status` | Show your current month progress against your goal. |
+| `/strava-connect` | Get a private Strava OAuth link. Strava is optional. |
+| `/strava-sync` | Import new Strava runs after connecting Strava. Sync is user-triggered, not automatic. |
+| `/admin-start-month month` | Create a challenge month for goal setting and run logging. The bot also creates the current month on startup. |
+| `/admin-close-month month` | Close the month and calculate missed-distance carryovers. |
+| `/admin-assign-leader member` | Assign the current month's leader. |
+| `/admin-override-run submission_id action distance_km` | Correct or remove a submitted run. |
+| `/admin-record-punishment member note` | Record a punishment note for a missed month. |
 
 Admin commands require Discord's Manage Server permission.
 

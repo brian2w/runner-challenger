@@ -389,6 +389,20 @@ describe("ChallengeService", () => {
     ok(boardReply.includes("John: 12/90km"));
   });
 
+  it("tells members to connect Strava before syncing", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    const reply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.sarah.id,
+      commandName: "strava-sync",
+    });
+
+    equal(reply, "Error: Connect Strava first with /strava-connect, then run /strava-sync.");
+  });
+
   it("keeps member registration idempotent for the same Discord user", async () => {
     const fixture = await createFixture();
 
