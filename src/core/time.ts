@@ -5,7 +5,14 @@ function pad(value: number): string {
 }
 
 export function createMonthKey(year: number, monthOneIndexed: number): MonthKey {
-  if (!Number.isInteger(year) || !Number.isInteger(monthOneIndexed) || monthOneIndexed < 1 || monthOneIndexed > 12) {
+  if (
+    !Number.isInteger(year) ||
+    year < 1000 ||
+    year > 9999 ||
+    !Number.isInteger(monthOneIndexed) ||
+    monthOneIndexed < 1 ||
+    monthOneIndexed > 12
+  ) {
     throw new Error("Month must be a valid YYYY-MM value.");
   }
   return `${year}-${pad(monthOneIndexed)}` as MonthKey;
