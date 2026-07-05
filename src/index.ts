@@ -1,8 +1,11 @@
 import { RunnerChallengeDiscordBot, type DiscordBotConfig } from "./adapters/discord/discordBot.js";
 import { StravaOAuthServer } from "./adapters/http/stravaOAuthServer.js";
 import { StravaOAuthClient } from "./adapters/strava/stravaProvider.js";
+import { loadLocalEnv } from "./config/loadEnv.js";
 import { JsonFileChallengeRepository } from "./repositories/jsonFileChallengeRepository.js";
 import { ChallengeService } from "./services/challengeService.js";
+
+loadLocalEnv();
 
 function requireEnv(name: string): string {
   const value = process.env[name];
