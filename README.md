@@ -4,9 +4,9 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 
 ## What It Does
 
-- Registers Discord slash commands for goal setting, screenshot-backed runs, Strava sync, status, and leaderboard views.
+- Registers Discord slash commands for goal setting, screenshot-backed proof submissions, status, and leaderboard views.
 - Tracks monthly goals, carryover penalties, leader assignments, admin run overrides, punishment notes, and month close summaries.
-- Imports Strava runs through OAuth and `/strava-sync`.
+- Can read clear run screenshots with local Tesseract OCR when users do not type distance/date.
 - Persists state to a JSON file so the bot survives restarts.
 - Keeps the challenge core independent from Discord so a later web app can reuse the same service layer.
 
@@ -15,13 +15,11 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 | Command | Purpose |
 | --- | --- |
 | `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
-| `/run-submit distance_km run_date screenshot` | Manually log a run by entering distance/date and attaching screenshot proof. The bot stores the screenshot URL but does not read or OCR the image. |
+| `/run-submit proof [distance_km] [run_date] [source] [note]` | Log a run with phone screenshot proof. If distance/date are omitted, the bot can privately read the screenshot and show Log Run / Cancel buttons before saving. |
 | `/leaderboard` | Show current standings for the active month. |
 | `/status` | Show your current month progress against your goal. |
 | `/punishments [member]` | Show recorded punishments for yourself or another member. |
 | `/leader-help` | Show the commands available to the assigned leader. |
-| `/strava-connect` | Get a private Strava OAuth link. Strava is optional. |
-| `/strava-sync` | Import new Strava runs after connecting Strava. Sync is user-triggered, not automatic. |
 | `/admin-start-month month` | Create a challenge month for goal setting and run logging. The bot also creates the current month on startup. |
 | `/admin-close-month month` | Close the month and calculate missed-distance carryovers. |
 | `/admin-assign-leader member` | Assign the current month's leader. |
@@ -40,7 +38,7 @@ npm run test
 npm run dry-run
 ```
 
-`npm run dry-run` builds the app, creates an in-memory challenge, imports fake Strava runs, and prints the resulting leaderboard without needing Discord credentials.
+`npm run dry-run` builds the app, creates an in-memory challenge, submits a proof-backed run, and prints the resulting leaderboard without needing Discord credentials.
 
 ## Live Discord Setup
 
@@ -57,22 +55,33 @@ DISCORD_TOKEN=... DISCORD_CLIENT_ID=... DISCORD_GUILD_ID=... npm run start
 
 The app registers guild slash commands on startup unless `REGISTER_COMMANDS=false`.
 
-## Strava Setup
+## Proof Submission Flow
 
-1. Create a Strava API app.
-2. Set the authorization callback domain to match `STRAVA_REDIRECT_URI`.
-3. Configure:
+Users submit runs directly in Discord:
 
-```bash
-STRAVA_CLIENT_ID=...
-STRAVA_CLIENT_SECRET=...
-STRAVA_REDIRECT_URI=http://localhost:3000/strava/callback
-STRAVA_STATE_SECRET=some-long-random-secret
+```text
+/run-submit proof:<phone screenshot> distance_km:5.24 run_date:2026-07-05 source:Garmin
 ```
 
-Users run `/strava-connect`, open the private OAuth link, authorize Strava, then return to Discord and run `/strava-sync`.
+Typed `distance_km` and `run_date` log immediately. If those fields are omitted and OCR can read the screenshot, the bot privately asks the user to confirm the detected distance/date with a `Log Run` button. If OCR cannot read the screenshot clearly, rerun the command with the values typed manually.
 
-For local development, Strava allows `localhost` and `127.0.0.1` callback URLs. For a hosted bot, point `STRAVA_REDIRECT_URI` at the public HTTPS callback URL.
+The OCR boundary is provider-based so Tesseract can be replaced later with PaddleOCR, native mobile OCR, or a hosted vision model without changing challenge rules.
+
+### Local OCR
+
+Tesseract is the default local OCR provider. Install it on the host running the bot, or disable OCR and keep using typed distance/date:
+
+```bash
+OCR_PROVIDER=none
+```
+
+Optional Tesseract settings:
+
+```bash
+OCR_PROVIDER=tesseract
+TESSERACT_BINARY=tesseract
+TESSERACT_LANGUAGE=eng
+```
 
 ## Data
 

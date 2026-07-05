@@ -24,16 +24,11 @@ import type {
   PunishmentRecord,
   RunSubmission,
   ScheduledPrompt,
-  StravaActivity,
 } from "../core/types.js";
 import type { ChallengeRepository } from "../repositories/challengeRepository.js";
-import type { StravaProvider } from "../adapters/strava/stravaProvider.js";
 
 export class ChallengeService {
-  constructor(
-    private readonly repository: ChallengeRepository,
-    private readonly stravaProvider?: StravaProvider,
-  ) {}
+  constructor(private readonly repository: ChallengeRepository) {}
 
   async createWorkspace(input: {
     name: string;
@@ -58,17 +53,14 @@ export class ChallengeService {
     discordUserId: string;
     displayName: string;
     isBot?: boolean;
-    connectedStravaAthleteId?: string;
   }): Promise<Member> {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getMemberByDiscordUserId(input.workspaceId, input.discordUserId);
     if (existing) {
       const nextIsBot = input.isBot ?? existing.isBot;
-      const nextConnectedStravaAthleteId = input.connectedStravaAthleteId ?? existing.connectedStravaAthleteId;
       if (
         existing.displayName === input.displayName &&
-        existing.isBot === nextIsBot &&
-        existing.connectedStravaAthleteId === nextConnectedStravaAthleteId
+        existing.isBot === nextIsBot
       ) {
         return existing;
       }
@@ -77,7 +69,6 @@ export class ChallengeService {
         ...existing,
         displayName: input.displayName,
         isBot: nextIsBot,
-        connectedStravaAthleteId: nextConnectedStravaAthleteId,
       };
       await this.repository.saveMember(updated);
       return updated;
@@ -89,7 +80,6 @@ export class ChallengeService {
       discordUserId: input.discordUserId,
       displayName: input.displayName,
       isBot: input.isBot,
-      connectedStravaAthleteId: input.connectedStravaAthleteId,
       createdAt: nowIso(),
     };
     await this.repository.saveMember(member);
@@ -171,10 +161,26 @@ export class ChallengeService {
     runDate: string;
     evidenceUrl: string;
   }): Promise<RunSubmission> {
+    return this.submitRunProof({
+      ...input,
+      evidenceLabel: "Screenshot",
+    });
+  }
+
+  async submitRunProof(input: {
+    workspaceId: string;
+    month: MonthKey;
+    memberId: string;
+    distanceKm: number;
+    runDate: string;
+    evidenceUrl: string;
+    evidenceLabel?: string;
+    userNote?: string;
+  }): Promise<RunSubmission> {
     const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
     await this.requireParticipantMember(input.memberId, input.workspaceId);
     if (!input.evidenceUrl) {
-      throw new DomainError("Manual submissions require a screenshot evidence URL.");
+      throw new DomainError("Run submissions require proof.");
     }
     if (!Number.isFinite(input.distanceKm) || input.distanceKm <= 0) {
       throw new DomainError("Run distance must be greater than zero.");
@@ -188,75 +194,17 @@ export class ChallengeService {
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
       memberId: input.memberId,
-      sourceType: "manual_screenshot",
+      sourceType: "proof_attachment",
       distanceKm: input.distanceKm,
       runDate: input.runDate,
       evidenceUrl: input.evidenceUrl,
+      evidenceLabel: input.evidenceLabel,
+      userNote: input.userNote,
       status: "accepted",
       acceptedAt: nowIso(),
     };
     await this.repository.saveSubmission(submission);
     return submission;
-  }
-
-  async syncStravaRuns(input: {
-    workspaceId: string;
-    month: MonthKey;
-    memberId: string;
-  }): Promise<RunSubmission[]> {
-    const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
-    const member = await this.requireParticipantMember(input.memberId, input.workspaceId);
-    if (!member.connectedStravaAthleteId) {
-      throw new DomainError("Member has not connected a Strava athlete.");
-    }
-    if (!this.stravaProvider) {
-      throw new DomainError("Strava provider is not configured.");
-    }
-
-    const activities = (await this.stravaProvider.listActivities(member.connectedStravaAthleteId, input.month)).filter(
-      (activity) => isIsoDateInMonth(activity.runDate, input.month),
-    );
-    return this.importStravaActivities(challenge.id, input.workspaceId, input.memberId, activities);
-  }
-
-  async importStravaActivities(
-    challengeId: string,
-    workspaceId: string,
-    memberId: string,
-    activities: StravaActivity[],
-  ): Promise<RunSubmission[]> {
-    const existing = await this.repository.listSubmissionsByChallenge(challengeId);
-    const seenExternalIds = new Set(
-      existing.filter((submission) => submission.externalActivityId).map((submission) => submission.externalActivityId),
-    );
-
-    const created: RunSubmission[] = [];
-    for (const activity of activities) {
-      if (seenExternalIds.has(activity.activityId)) {
-        continue;
-      }
-      if (!Number.isFinite(activity.distanceKm) || activity.distanceKm <= 0 || !isIsoDate(activity.runDate)) {
-        continue;
-      }
-
-      const submission: RunSubmission = {
-        id: randomUUID(),
-        workspaceId,
-        challengeId,
-        memberId,
-        sourceType: "strava_activity",
-        distanceKm: activity.distanceKm,
-        runDate: activity.runDate,
-        externalActivityId: activity.activityId,
-        status: "accepted",
-        acceptedAt: nowIso(),
-      };
-      seenExternalIds.add(activity.activityId);
-      created.push(submission);
-      await this.repository.saveSubmission(submission);
-    }
-
-    return created;
   }
 
   async overrideRun(input: {

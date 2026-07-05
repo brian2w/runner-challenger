@@ -11,7 +11,6 @@ import type {
   PunishmentRecord,
   RunSubmission,
   ScheduledPrompt,
-  StravaConnection,
 } from "../core/types.js";
 import { InMemoryChallengeRepository } from "./inMemoryChallengeRepository.js";
 
@@ -26,7 +25,6 @@ interface RepositorySnapshot {
   results: MonthlyResult[];
   punishments: PunishmentRecord[];
   prompts: ScheduledPrompt[];
-  stravaConnections: StravaConnection[];
 }
 
 export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
@@ -55,9 +53,6 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
       this.loadMap(this.results, snapshot.results);
       this.loadMap(this.punishments, snapshot.punishments);
       this.loadMap(this.prompts, snapshot.prompts);
-      for (const connection of snapshot.stravaConnections ?? []) {
-        this.stravaConnections.set(connection.memberId, connection);
-      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -123,11 +118,6 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
     await this.persist();
   }
 
-  override async saveStravaConnection(connection: StravaConnection): Promise<void> {
-    await super.saveStravaConnection(connection);
-    await this.persist();
-  }
-
   private loadMap<T extends { id: string }>(target: Map<string, T>, records: T[] | undefined): void {
     for (const record of records ?? []) {
       target.set(record.id, record);
@@ -147,7 +137,6 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
         results: [...this.results.values()],
         punishments: [...this.punishments.values()],
         prompts: [...this.prompts.values()],
-        stravaConnections: [...this.stravaConnections.values()],
       };
       const tempPath = `${this.filePath}.writing`;
       await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`);

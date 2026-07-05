@@ -1,21 +1,11 @@
-import { createHmac } from "node:crypto";
 import { deepEqual, equal, ok, rejects, throws } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DiscordCommandHandler } from "../src/adapters/discord/discordCommandHandler.js";
 import { DiscordPresenter } from "../src/adapters/discord/discordPresenter.js";
-import { decodeStravaOAuthState, encodeStravaOAuthState } from "../src/adapters/strava/oauthState.js";
-import { FakeStravaProvider, StravaOAuthClient } from "../src/adapters/strava/stravaProvider.js";
 import { createMonthKey, createMonthKeyForDate } from "../src/core/time.js";
-import type { StravaActivity, StravaConnection } from "../src/core/types.js";
 import { InMemoryChallengeRepository } from "../src/repositories/inMemoryChallengeRepository.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
 import { ChallengeService } from "../src/services/challengeService.js";
-
-function signStravaOAuthStatePayload(payload: unknown, secret: string): string {
-  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
-  return `${encodedPayload}.${signature}`;
-}
 
 class FailsPromptPersistenceOnceRepository extends InMemoryChallengeRepository {
   private promptWrites = 0;
@@ -97,9 +87,7 @@ class FailsAfterCloseChallengeMutationRepository extends InMemoryChallengeReposi
 async function createFixture() {
   const month = createMonthKey(2026, 4);
   const repository = new InMemoryChallengeRepository();
-  const stravaActivities = new Map<string, StravaActivity[]>();
-  const stravaProvider = new FakeStravaProvider(stravaActivities);
-  const service = new ChallengeService(repository, stravaProvider);
+  const service = new ChallengeService(repository);
 
   const workspace = await service.createWorkspace({
     name: "Run Club",
@@ -119,7 +107,6 @@ async function createFixture() {
     workspaceId: workspace.id,
     discordUserId: "discord-john",
     displayName: "John",
-    connectedStravaAthleteId: "athlete-john",
   });
   const sarah = await service.registerMember({
     workspaceId: workspace.id,
@@ -138,7 +125,6 @@ async function createFixture() {
   return {
     month,
     repository,
-    stravaActivities,
     service,
     workspace,
     john,
@@ -207,6 +193,26 @@ describe("ChallengeService", () => {
     equal(leaderboard[0]?.displayName, "John");
     equal(leaderboard[0]?.completedKm, 5);
     equal(leaderboard[0]?.percentComplete, 5);
+  });
+
+  it("stores portable proof metadata when a proof-backed run is submitted", async () => {
+    const fixture = await createFixture();
+
+    const submission = await fixture.service.submitRunProof({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.john.id,
+      distanceKm: 6.4,
+      runDate: "2026-04-03",
+      evidenceUrl: "https://cdn.example/garmin-proof.png",
+      evidenceLabel: "Garmin screenshot",
+      userNote: "Treadmill cooldown excluded.",
+    });
+
+    equal(submission.sourceType, "proof_attachment");
+    equal(submission.evidenceUrl, "https://cdn.example/garmin-proof.png");
+    equal(submission.evidenceLabel, "Garmin screenshot");
+    equal(submission.userNote, "Treadmill cooldown excluded.");
   });
 
   it("excludes bot accounts from leaderboard rows and group totals", async () => {
@@ -282,38 +288,6 @@ describe("ChallengeService", () => {
       }),
       /Bot accounts cannot participate/,
     );
-  });
-
-  it("deduplicates Strava imports by external activity id", async () => {
-    const fixture = await createFixture();
-    fixture.stravaActivities.set("athlete-john", [
-      {
-        activityId: "strava-1",
-        athleteId: "athlete-john",
-        distanceKm: 12.5,
-        runDate: "2026-04-03",
-      },
-      {
-        activityId: "strava-2",
-        athleteId: "athlete-john",
-        distanceKm: 7,
-        runDate: "2026-04-05",
-      },
-    ]);
-
-    const firstImport = await fixture.service.syncStravaRuns({
-      workspaceId: fixture.workspace.id,
-      month: fixture.month,
-      memberId: fixture.john.id,
-    });
-    const secondImport = await fixture.service.syncStravaRuns({
-      workspaceId: fixture.workspace.id,
-      month: fixture.month,
-      memberId: fixture.john.id,
-    });
-
-    equal(firstImport.length, 2);
-    equal(secondImport.length, 0);
   });
 
   it("applies admin overrides to leaderboard totals", async () => {
@@ -1203,7 +1177,9 @@ describe("ChallengeService", () => {
     const statusMessage = presenter.renderMemberStatus(memberStatuses.find((status) => status.memberId === fixture.john.id)!);
 
     ok(leaderboardMessage.includes("John: 40/100km"));
+    ok(leaderboardMessage.includes("[👟👟👟👟······]"));
     ok(statusMessage.includes("40/100km"));
+    ok(statusMessage.includes("[👟👟👟👟······]"));
     deepEqual(
       monthlySummary.leaderboard.map((row) => row.displayName),
       ["John", "Sarah", "Mike"],
@@ -1231,7 +1207,7 @@ describe("ChallengeService", () => {
       options: {
         distance_km: 12,
         run_date: "2026-04-12",
-        screenshot: "https://cdn.example/12k.png",
+        proof: "https://cdn.example/12k.png",
       },
     });
     const boardReply = await handler.handle({
@@ -1242,10 +1218,65 @@ describe("ChallengeService", () => {
     });
 
     ok(goalReply.includes("90km"));
-    ok(runReply.includes("12km logged"));
+    ok(runReply.includes("Run logged: 12km on 2026-04-12"));
     ok(boardReply.includes("Group:"));
     ok(boardReply.includes("12/90km"));
     ok(boardReply.includes("John: 12/90km"));
+  });
+
+  it("returns a useful receipt when a proof-backed run is submitted through Discord", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    await fixture.service.setGoal({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      memberId: fixture.john.id,
+      baseGoalKm: 50,
+    });
+    const reply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "run-submit",
+      options: {
+        proof: "https://cdn.example/apple-fitness.png",
+        distance_km: 7.2,
+        run_date: "2026-04-05",
+        source: "Apple Fitness",
+        note: "Evening run",
+      },
+    });
+
+    ok(reply.includes("Run logged: 7.2km on 2026-04-05"));
+    ok(reply.includes("Proof: Apple Fitness"));
+    ok(reply.includes("Progress: 7.2/50km"));
+    ok(reply.includes("Submission ID:"));
+  });
+
+  it("shows OCR suggestions without saving when typed run fields are missing", async () => {
+    const fixture = await createFixture();
+    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
+
+    const reply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "run-submit",
+      options: {
+        proof: "https://cdn.example/ocr-proof.png",
+        ocr_distance_km: 4.8,
+        ocr_run_date: "2026-04-08",
+      },
+    });
+    const summary = await fixture.service.getMonthlySummary({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+    });
+
+    ok(reply.includes("I read 4.8km on 2026-04-08"));
+    ok(reply.includes("Rerun /run-submit"));
+    equal(summary.submissions.length, 0);
   });
 
   it("lets the assigned leader record punishments and members view them", async () => {
@@ -1393,20 +1424,6 @@ describe("ChallengeService", () => {
     ok(closeReply.includes("/leader-record-punishment member note"));
   });
 
-  it("tells members to connect Strava before syncing", async () => {
-    const fixture = await createFixture();
-    const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
-
-    const reply = await handler.handle({
-      workspaceId: fixture.workspace.id,
-      month: fixture.month,
-      actorMemberId: fixture.sarah.id,
-      commandName: "strava-sync",
-    });
-
-    equal(reply, "Error: Connect Strava first with /strava-connect, then run /strava-sync.");
-  });
-
   it("keeps member registration idempotent for the same Discord user", async () => {
     const fixture = await createFixture();
 
@@ -1453,7 +1470,7 @@ describe("ChallengeService", () => {
       options: {
         distance_km: 5,
         run_date: "2026-05-01",
-        screenshot: "https://cdn.example/wrong-month.png",
+        proof: "https://cdn.example/wrong-month.png",
       },
     });
 
@@ -1519,120 +1536,4 @@ describe("ChallengeService", () => {
     equal(leaderboard[0]?.effectiveGoalKm, 42);
   });
 
-  it("signs Strava OAuth state so callback member ids cannot be silently changed", () => {
-    const encoded = encodeStravaOAuthState({ workspaceId: "workspace-1", memberId: "member-1" }, "secret");
-    deepEqual(decodeStravaOAuthState(encoded, "secret"), { workspaceId: "workspace-1", memberId: "member-1" });
-
-    const [payload] = encoded.split(".");
-    const tamperedPayload = Buffer.from(JSON.stringify({ workspaceId: "workspace-1", memberId: "member-2" })).toString(
-      "base64url",
-    );
-    const tampered = `${tamperedPayload}.${encoded.split(".")[1]}`;
-
-    ok(payload !== tamperedPayload);
-    throws(() => decodeStravaOAuthState(tampered, "secret"));
-    throws(() => decodeStravaOAuthState(`${payload}.short`, "secret"));
-    throws(() => decodeStravaOAuthState(`${encoded}.extra`, "secret"));
-    throws(
-      () => decodeStravaOAuthState(`${payload}.${"é".repeat(encoded.split(".")[1].length)}`, "secret"),
-      /Invalid Strava OAuth state/,
-    );
-    throws(
-      () => decodeStravaOAuthState(signStravaOAuthStatePayload({ workspaceId: ["workspace-1"], memberId: "member-1" }, "secret"), "secret"),
-      /Invalid Strava OAuth state payload/,
-    );
-    throws(
-      () => decodeStravaOAuthState(signStravaOAuthStatePayload({ workspaceId: "workspace-1", memberId: 123 }, "secret"), "secret"),
-      /Invalid Strava OAuth state payload/,
-    );
-  });
-
-  it("paginates Strava activity imports and only returns run-like activities", async () => {
-    const fixture = await createFixture();
-    const connection: StravaConnection = {
-      id: "connection-1",
-      workspaceId: fixture.workspace.id,
-      memberId: fixture.john.id,
-      athleteId: "athlete-john",
-      scope: "activity:read",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresAt: Math.floor(Date.now() / 1000) + 7200,
-      updatedAt: "2026-04-01T00:00:00.000Z",
-    };
-    await fixture.repository.saveStravaConnection(connection);
-    const originalFetch = globalThis.fetch;
-    const requestedPages: string[] = [];
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({
-      id: index + 1,
-      sport_type: "Run",
-      distance: 1000,
-      start_date_local: "2026-04-02T08:00:00Z",
-    }));
-    const secondPage = [
-      {
-        id: 101,
-        sport_type: "TrailRun",
-        distance: 2500,
-        start_date_local: "2026-04-03T08:00:00Z",
-      },
-      {
-        id: 102,
-        sport_type: "Ride",
-        distance: 5000,
-        start_date_local: "2026-04-04T08:00:00Z",
-      },
-    ];
-    globalThis.fetch = async (input: string | URL | Request) => {
-      const url = new URL(input.toString());
-      const page = url.searchParams.get("page") ?? "1";
-      requestedPages.push(page);
-      return new Response(JSON.stringify(page === "1" ? firstPage : secondPage), { status: 200 });
-    };
-
-    try {
-      const client = new StravaOAuthClient(fixture.repository, {
-        clientId: "client-id",
-        clientSecret: "client-secret",
-        redirectUri: "http://localhost:3000/strava/callback",
-      });
-      const activities = await client.listActivities("athlete-john", fixture.month);
-
-      deepEqual(requestedPages, ["1", "2"]);
-      equal(activities.length, 101);
-      equal(activities.at(-1)?.distanceKm, 2.5);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("rejects Strava OAuth connections without activity read scope or complete token fields", async () => {
-    const fixture = await createFixture();
-    const client = new StravaOAuthClient(fixture.repository, {
-      clientId: "client-id",
-      clientSecret: "client-secret",
-      redirectUri: "http://localhost:3000/strava/callback",
-    });
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(
-        JSON.stringify({
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          expires_at: Math.floor(Date.now() / 1000) + 7200,
-          athlete: { id: 123 },
-          scope: "read",
-        }),
-        { status: 200 },
-      );
-
-    try {
-      await rejects(() => client.exchangeCode({ member: fixture.john, code: "code", scope: "read" }));
-
-      globalThis.fetch = async () => new Response(JSON.stringify({ access_token: "access-token" }), { status: 200 });
-      await rejects(() => client.exchangeCode({ member: fixture.john, code: "code", scope: "activity:read" }));
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
 });

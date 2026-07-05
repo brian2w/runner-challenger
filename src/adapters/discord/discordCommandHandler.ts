@@ -34,15 +34,29 @@ export class DiscordCommandHandler {
           return `Goal set: ${goal.baseGoalKm}km base + ${goal.carryoverKm}km carryover = ${goal.effectiveGoalKm}km effective target.`;
         }
         case "run-submit": {
-          const submission = await this.service.submitManualRun({
+          const distanceKm = this.optionalNumber(input.options, "distance_km");
+          const runDate = this.optionalString(input.options, "run_date");
+          if (distanceKm === undefined || !runDate) {
+            const ocrDistanceKm = this.optionalNumber(input.options, "ocr_distance_km");
+            const ocrRunDate = this.optionalString(input.options, "ocr_run_date");
+            if (ocrDistanceKm !== undefined && ocrRunDate) {
+              return `I read ${ocrDistanceKm}km on ${ocrRunDate}. Rerun /run-submit with distance_km:${ocrDistanceKm} run_date:${ocrRunDate}, or type the correct values if OCR misread it.`;
+            }
+            throw new DomainError(
+              "Add distance_km and run_date, or upload a clearer proof screenshot so OCR can read them.",
+            );
+          }
+          const submission = await this.service.submitRunProof({
             workspaceId: input.workspaceId,
             month: input.month,
             memberId: input.actorMemberId,
-            distanceKm: this.requireNumber(input.options, "distance_km"),
-            runDate: this.requireString(input.options, "run_date"),
-            evidenceUrl: this.requireString(input.options, "screenshot"),
+            distanceKm,
+            runDate,
+            evidenceUrl: this.requireString(input.options, "proof"),
+            evidenceLabel: this.optionalString(input.options, "source"),
+            userNote: this.optionalString(input.options, "note"),
           });
-          return `Run accepted: ${submission.distanceKm}km logged for ${submission.runDate}.`;
+          return this.renderRunReceipt(input.workspaceId, submission);
         }
         case "leaderboard": {
           const request = {
@@ -83,18 +97,6 @@ export class DiscordCommandHandler {
         case "leader-help": {
           const isLeader = await this.isLeader(input);
           return this.presenter.renderLeaderHelp(input.month, { isLeader, isAdmin: Boolean(input.isAdmin) });
-        }
-        case "strava-connect":
-          return "Use /strava-connect in the live Discord bot to receive your private Strava OAuth link.";
-        case "strava-sync": {
-          const imported = await this.service.syncStravaRuns({
-            workspaceId: input.workspaceId,
-            month: input.month,
-            memberId: input.actorMemberId,
-          });
-          return imported.length === 0
-            ? "No new Strava runs were found."
-            : `Imported ${imported.length} Strava run${imported.length === 1 ? "" : "s"}.`;
         }
         case "admin-start-month":
           this.requireAdmin(input);
@@ -181,9 +183,6 @@ export class DiscordCommandHandler {
       }
     } catch (error) {
       if (error instanceof DomainError) {
-        if (input.commandName === "strava-sync" && error.message === "Member has not connected a Strava athlete.") {
-          return "Error: Connect Strava first with /strava-connect, then run /strava-sync.";
-        }
         return `Error: ${error.message}`;
       }
       throw error;
@@ -254,6 +253,24 @@ export class DiscordCommandHandler {
   private optionalString(options: Record<string, string | number | undefined> | undefined, key: string): string | undefined {
     const value = options?.[key];
     return typeof value === "string" && value.length > 0 ? value : undefined;
+  }
+
+  private async renderRunReceipt(workspaceId: string, submission: {
+    id: string;
+    challengeId: string;
+    memberId: string;
+    distanceKm: number;
+    runDate: string;
+    evidenceLabel?: string;
+  }): Promise<string> {
+    const statuses = await this.service.getMemberStatuses(workspaceId, submission.challengeId);
+    const status = statuses.find((candidate) => candidate.memberId === submission.memberId);
+    const proofLabel = submission.evidenceLabel ? `\nProof: ${submission.evidenceLabel}` : "";
+    const progress = status
+      ? `\nProgress: ${status.completedKm}/${status.effectiveGoalKm}km`
+      : "";
+
+    return `Run logged: ${submission.distanceKm}km on ${submission.runDate}${proofLabel}${progress}\nSubmission ID: ${submission.id}`;
   }
 
   private requireNumber(options: Record<string, string | number | undefined> | undefined, key: string): number {

@@ -9,7 +9,7 @@ import type {
 
 function renderProgressBar(percent: number): string {
   const filled = Math.min(Math.round(percent / 10), 10);
-  return `[${"#".repeat(filled)}${"-".repeat(10 - filled)}]`;
+  return `[${"👟".repeat(filled)}${"·".repeat(10 - filled)}]`;
 }
 
 export class DiscordPresenter {
@@ -39,11 +39,11 @@ export class DiscordPresenter {
   }
 
   renderMonthStartPrompt(month: string): string {
-    return `**New month: ${month}**\nSet your goal with \`/goal-set\`, then log runs with \`/run-submit\` or sync Strava with \`/strava-sync\`.`;
+    return `**New month: ${month}**\nSet your goal with \`/goal-set\`, then log runs with \`/run-submit\` and attach proof.`;
   }
 
   renderReminder(month: string): string {
-    return `**Weekly check-in · ${month}**\nLog your runs, sync Strava, and keep the leaderboard moving.`;
+    return `**Weekly check-in · ${month}**\nLog your runs with proof and keep the leaderboard moving.`;
   }
 
   renderMonthClose(summary: MonthCloseSummary, memberNames: Map<string, string>): string {
@@ -110,7 +110,7 @@ export class DiscordPresenter {
       return this.renderReminder(month);
     }
     if (prompt.kind === "month_close") {
-      return `**Month-end today · ${month}**\nFinal sync and screenshot submissions close soon.`;
+      return `**Month-end today · ${month}**\nFinal proof submissions close soon.`;
     }
 
     return `**Leaderboard update scheduled · ${month}**`;

@@ -1,23 +1,12 @@
 import { DiscordCommandHandler } from "./adapters/discord/discordCommandHandler.js";
-import { FakeStravaProvider } from "./adapters/strava/stravaProvider.js";
 import { createMonthKey } from "./core/time.js";
-import type { StravaActivity } from "./core/types.js";
 import { InMemoryChallengeRepository } from "./repositories/inMemoryChallengeRepository.js";
 import { ChallengeService } from "./services/challengeService.js";
 
 async function main(): Promise<void> {
   const month = createMonthKey(2026, 5);
-  const activities = new Map<string, StravaActivity[]>([
-    [
-      "athlete-brian",
-      [
-        { activityId: "run-1", athleteId: "athlete-brian", distanceKm: 5.2, runDate: "2026-05-03" },
-        { activityId: "run-2", athleteId: "athlete-brian", distanceKm: 7.8, runDate: "2026-05-08" },
-      ],
-    ],
-  ]);
   const repository = new InMemoryChallengeRepository();
-  const service = new ChallengeService(repository, new FakeStravaProvider(activities));
+  const service = new ChallengeService(repository);
   const handler = new DiscordCommandHandler(service, repository);
   const workspace = await service.createWorkspace({
     name: "Runner Challenger Dry Run",
@@ -36,7 +25,6 @@ async function main(): Promise<void> {
     workspaceId: workspace.id,
     discordUserId: "discord-brian",
     displayName: "Brian",
-    connectedStravaAthleteId: "athlete-brian",
   });
   await service.startMonth({ workspaceId: workspace.id, month });
 
@@ -54,7 +42,13 @@ async function main(): Promise<void> {
       workspaceId: workspace.id,
       month,
       actorMemberId: brian.id,
-      commandName: "strava-sync",
+      commandName: "run-submit",
+      options: {
+        proof: "https://cdn.example/brian-run-proof.png",
+        distance_km: 13,
+        run_date: "2026-05-08",
+        source: "Garmin screenshot",
+      },
     }),
   );
   console.log(

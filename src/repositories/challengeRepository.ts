@@ -9,7 +9,6 @@ import type {
   PunishmentRecord,
   RunSubmission,
   ScheduledPrompt,
-  StravaConnection,
 } from "../core/types.js";
 
 export interface ChallengeRepository {
@@ -50,7 +49,4 @@ export interface ChallengeRepository {
 
   saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void>;
   listScheduledPromptsByChallenge(challengeId: string): Promise<ScheduledPrompt[]>;
-
-  saveStravaConnection(connection: StravaConnection): Promise<void>;
-  getStravaConnectionByMemberId(memberId: string): Promise<StravaConnection | undefined>;
 }

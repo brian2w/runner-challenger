@@ -2,7 +2,7 @@ export type MonthKey = `${number}-${number}`;
 
 export type ChallengeKind = "monthly_distance_km";
 export type ChallengeStatus = "open" | "closed";
-export type EvidenceSourceType = "manual_screenshot" | "strava_activity";
+export type EvidenceSourceType = "proof_attachment";
 export type SubmissionStatus = "accepted" | "corrected" | "removed";
 export type PromptKind =
   | "month_start"
@@ -32,7 +32,6 @@ export interface Member {
   discordUserId: string;
   displayName: string;
   isBot?: boolean;
-  connectedStravaAthleteId?: string;
   createdAt: string;
 }
 
@@ -75,9 +74,10 @@ export interface RunSubmission {
   distanceKm: number;
   runDate: string;
   evidenceUrl?: string;
-  externalActivityId?: string;
+  evidenceLabel?: string;
   status: SubmissionStatus;
   note?: string;
+  userNote?: string;
   acceptedAt: string;
 }
 
@@ -126,25 +126,6 @@ export interface ScheduledPrompt {
   scheduledFor: string;
   channelKey: keyof DiscordWorkspace["channelRefs"];
   deliveredAt?: string;
-}
-
-export interface StravaActivity {
-  activityId: string;
-  athleteId: string;
-  distanceKm: number;
-  runDate: string;
-}
-
-export interface StravaConnection {
-  id: string;
-  workspaceId: string;
-  memberId: string;
-  athleteId: string;
-  scope: string;
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-  updatedAt: string;
 }
 
 export interface LeaderboardRow {

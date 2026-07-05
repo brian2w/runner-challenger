@@ -20,11 +20,13 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "run-submit",
-    description: "Manually log a run by entering distance/date and attaching screenshot proof.",
+    description: "Log a run with screenshot proof. Distance/date can be typed or OCR-assisted.",
     options: [
-      { name: "distance_km", description: "Run distance.", type: "number", required: true },
-      { name: "run_date", description: "Run date in YYYY-MM-DD format.", type: "string", required: true },
-      { name: "screenshot", description: "Screenshot attachment URL.", type: "attachment", required: true },
+      { name: "proof", description: "Phone screenshot showing the run details.", type: "attachment", required: true },
+      { name: "distance_km", description: "Run distance in km, if not using OCR.", type: "number", required: false },
+      { name: "run_date", description: "Run date in YYYY-MM-DD, if not using OCR.", type: "string", required: false },
+      { name: "source", description: "Proof source, for example Garmin or Apple Fitness.", type: "string", required: false },
+      { name: "note", description: "Optional context for the leader/admin.", type: "string", required: false },
     ],
   },
   {
@@ -43,14 +45,6 @@ export const slashCommands: SlashCommandDefinition[] = [
   {
     name: "leader-help",
     description: "Show commands available to the assigned leader.",
-  },
-  {
-    name: "strava-connect",
-    description: "Start Strava account linking.",
-  },
-  {
-    name: "strava-sync",
-    description: "Import new Strava runs after connecting Strava.",
   },
   {
     name: "admin-start-month",

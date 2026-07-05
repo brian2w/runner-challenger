@@ -9,7 +9,6 @@ import type {
   PunishmentRecord,
   RunSubmission,
   ScheduledPrompt,
-  StravaConnection,
 } from "../core/types.js";
 import type { ChallengeRepository } from "./challengeRepository.js";
 
@@ -24,7 +23,6 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
   protected readonly results = new Map<string, MonthlyResult>();
   protected readonly punishments = new Map<string, PunishmentRecord>();
   protected readonly prompts = new Map<string, ScheduledPrompt>();
-  protected readonly stravaConnections = new Map<string, StravaConnection>();
 
   async saveWorkspace(workspace: DiscordWorkspace): Promise<void> {
     this.workspaces.set(workspace.id, workspace);
@@ -151,13 +149,5 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
     return [...this.prompts.values()]
       .filter((prompt) => prompt.challengeId === challengeId)
       .sort((left, right) => left.scheduledFor.localeCompare(right.scheduledFor));
-  }
-
-  async saveStravaConnection(connection: StravaConnection): Promise<void> {
-    this.stravaConnections.set(connection.memberId, connection);
-  }
-
-  async getStravaConnectionByMemberId(memberId: string): Promise<StravaConnection | undefined> {
-    return this.stravaConnections.get(memberId);
   }
 }
