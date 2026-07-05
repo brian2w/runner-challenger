@@ -100,6 +100,7 @@ export class ChallengeService {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getChallengeByMonth(input.workspaceId, input.month);
     if (existing) {
+      await this.ensureDefaultPrompts(existing);
       return existing;
     }
 
@@ -112,9 +113,7 @@ export class ChallengeService {
       createdAt: nowIso(),
     };
     await this.repository.saveChallenge(challenge);
-
-    const prompts = this.buildDefaultPrompts(challenge);
-    await Promise.all(prompts.map((prompt) => this.repository.saveScheduledPrompt(prompt)));
+    await this.ensureDefaultPrompts(challenge);
 
     return challenge;
   }
@@ -355,31 +354,45 @@ export class ChallengeService {
   }
 
   async closeMonth(input: { workspaceId: string; month: MonthKey }): Promise<MonthCloseSummary> {
-    const challenge = await this.requireOpenChallenge(input.workspaceId, input.month);
+    const challenge = await this.requireChallenge(input.workspaceId, input.month);
     const members = await this.repository.listMembersByWorkspace(input.workspaceId);
     const goals = await this.repository.listGoalsByChallenge(challenge.id);
     const submissions = await this.repository.listSubmissionsByChallenge(challenge.id);
-    const statuses = buildMemberMonthStatuses(members, goals, submissions);
-    const closedAt = nowIso();
-    const results = [];
+    const existingResults = await this.repository.listMonthlyResultsByChallenge(challenge.id);
+    const existingResultsByMember = new Map(existingResults.map((result) => [result.memberId, result]));
+    const targetMonth = nextMonth(input.month);
+    const existingCarryovers = await this.repository.listCarryoversByTargetMonth(input.workspaceId, targetMonth);
+    const existingCarryoversByMember = this.carryoversByMemberForSourceChallenge(existingCarryovers, challenge.id);
+    const existingCloseCutoff = existingResults.map((result) => result.closedAt).sort()[0];
+    const membersForClose =
+      existingCloseCutoff !== undefined
+        ? members.filter(
+            (member) => existingResultsByMember.has(member.id) || member.createdAt <= existingCloseCutoff,
+          )
+        : members;
+    const statuses = buildMemberMonthStatuses(membersForClose, goals, submissions);
+    const closedAt = challenge.closedAt ?? existingCloseCutoff ?? nowIso();
+    const results: MonthCloseSummary["results"] = [];
 
     for (const status of statuses) {
+      const existingResult = existingResultsByMember.get(status.memberId);
       const result = {
-        id: randomUUID(),
+        id: existingResult?.id ?? this.monthlyResultId(challenge.id, status.memberId),
         ...buildMonthlyResult(status.memberId, closedAt, challenge.id, input.workspaceId, status),
       };
       results.push(result);
       await this.repository.saveMonthlyResult(result);
 
-      if (result.generatedCarryoverKm > 0) {
+      const existingCarryover = existingCarryoversByMember.get(result.memberId);
+      if (result.generatedCarryoverKm > 0 || existingCarryover) {
         const carryover: CarryoverPenalty = {
-          id: randomUUID(),
+          id: existingCarryover?.id ?? this.carryoverPenaltyId(challenge.id, result.memberId),
           workspaceId: input.workspaceId,
           memberId: result.memberId,
           sourceChallengeId: challenge.id,
-          targetMonth: nextMonth(input.month),
+          targetMonth,
           amountKm: result.generatedCarryoverKm,
-          createdAt: closedAt,
+          createdAt: existingCarryover?.createdAt ?? closedAt,
         };
         await this.repository.saveCarryoverPenalty(carryover);
       }
@@ -467,7 +480,7 @@ export class ChallengeService {
 
     return [
       ...prompts.map((prompt) => ({
-        id: randomUUID(),
+        id: this.scheduledPromptId(challenge.id, prompt.kind, prompt.offsetDays, prompt.channelKey),
         workspaceId: challenge.workspaceId,
         challengeId: challenge.id,
         month: challenge.month,
@@ -476,7 +489,7 @@ export class ChallengeService {
         channelKey: prompt.channelKey,
       })),
       {
-        id: randomUUID(),
+        id: this.scheduledPromptId(challenge.id, "month_close", -1, "announcements"),
         workspaceId: challenge.workspaceId,
         challengeId: challenge.id,
         month: challenge.month,
@@ -487,14 +500,99 @@ export class ChallengeService {
     ];
   }
 
+  private async ensureDefaultPrompts(challenge: MonthlyChallenge): Promise<void> {
+    const existingPrompts = await this.repository.listScheduledPromptsByChallenge(challenge.id);
+    const existingPromptsByKey = new Map(
+      existingPrompts.map((prompt) => [this.scheduledPromptKey(prompt), prompt]),
+    );
+
+    for (const prompt of this.buildDefaultPrompts(challenge)) {
+      const existingPrompt = existingPromptsByKey.get(this.scheduledPromptKey(prompt));
+      if (!existingPrompt || existingPrompt.id === prompt.id) {
+        await this.repository.saveScheduledPrompt({
+          ...prompt,
+          deliveredAt: existingPrompt?.deliveredAt,
+        });
+      }
+    }
+  }
+
+  private scheduledPromptKey(prompt: Pick<ScheduledPrompt, "kind" | "scheduledFor" | "channelKey">): string {
+    return `${prompt.kind}:${prompt.scheduledFor}:${prompt.channelKey}`;
+  }
+
+  private scheduledPromptId(
+    challengeId: string,
+    kind: PromptKind,
+    offsetDays: number,
+    channelKey: ScheduledPrompt["channelKey"],
+  ): string {
+    return `scheduled-prompt:${challengeId}:${kind}:${offsetDays}:${channelKey}`;
+  }
+
+  private monthlyResultId(challengeId: string, memberId: string): string {
+    return `monthly-result:${challengeId}:${memberId}`;
+  }
+
+  private carryoverPenaltyId(challengeId: string, memberId: string): string {
+    return `carryover-penalty:${challengeId}:${memberId}`;
+  }
+
+  private carryoversByMemberForSourceChallenge(
+    carryovers: CarryoverPenalty[],
+    sourceChallengeId: string,
+  ): Map<string, CarryoverPenalty> {
+    const carryoversByMember = new Map<string, CarryoverPenalty[]>();
+    for (const carryover of carryovers) {
+      if (carryover.sourceChallengeId === sourceChallengeId) {
+        carryoversByMember.set(carryover.memberId, [...(carryoversByMember.get(carryover.memberId) ?? []), carryover]);
+      }
+    }
+
+    return new Map(
+      [...carryoversByMember.entries()].map(([memberId, memberCarryovers]) => [
+        memberId,
+        this.selectCarryoverForSourceMember(sourceChallengeId, memberId, memberCarryovers),
+      ]),
+    );
+  }
+
+  private selectCarryoverForSourceMember(
+    sourceChallengeId: string,
+    memberId: string,
+    carryovers: CarryoverPenalty[],
+  ): CarryoverPenalty {
+    const deterministicId = this.carryoverPenaltyId(sourceChallengeId, memberId);
+    const deterministicCarryover = carryovers.find((carryover) => carryover.id === deterministicId);
+    if (deterministicCarryover) {
+      return deterministicCarryover;
+    }
+
+    return [...carryovers].sort(
+      (left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+    )[0]!;
+  }
+
   private async getCarryoverForMember(
     workspaceId: string,
     month: MonthKey,
     memberId: string,
   ): Promise<number> {
     const carryovers = await this.repository.listCarryoversByTargetMonth(workspaceId, month);
-    return carryovers
-      .filter((carryover) => carryover.memberId === memberId)
+    const carryoversBySourceChallenge = new Map<string, CarryoverPenalty[]>();
+    for (const carryover of carryovers) {
+      if (carryover.memberId === memberId) {
+        carryoversBySourceChallenge.set(carryover.sourceChallengeId, [
+          ...(carryoversBySourceChallenge.get(carryover.sourceChallengeId) ?? []),
+          carryover,
+        ]);
+      }
+    }
+
+    return [...carryoversBySourceChallenge.entries()]
+      .map(([sourceChallengeId, sourceCarryovers]) =>
+        this.selectCarryoverForSourceMember(sourceChallengeId, memberId, sourceCarryovers),
+      )
       .reduce((total, carryover) => total + carryover.amountKm, 0);
   }
 

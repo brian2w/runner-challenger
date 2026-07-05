@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { deepEqual, equal, ok, rejects, throws } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DiscordCommandHandler } from "../src/adapters/discord/discordCommandHandler.js";
@@ -9,6 +10,89 @@ import type { StravaActivity, StravaConnection } from "../src/core/types.js";
 import { InMemoryChallengeRepository } from "../src/repositories/inMemoryChallengeRepository.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
 import { ChallengeService } from "../src/services/challengeService.js";
+
+function signStravaOAuthStatePayload(payload: unknown, secret: string): string {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+class FailsPromptPersistenceOnceRepository extends InMemoryChallengeRepository {
+  private promptWrites = 0;
+  private hasFailed = false;
+
+  override async saveScheduledPrompt(
+    prompt: Parameters<InMemoryChallengeRepository["saveScheduledPrompt"]>[0],
+  ): Promise<void> {
+    this.promptWrites += 1;
+    if (!this.hasFailed && this.promptWrites === 4) {
+      this.hasFailed = true;
+      throw new Error("simulated prompt persistence failure");
+    }
+
+    await super.saveScheduledPrompt(prompt);
+  }
+}
+
+class FailsAfterFinalPromptMutationRepository extends InMemoryChallengeRepository {
+  promptWrites = 0;
+  private hasFailed = false;
+
+  override async saveScheduledPrompt(
+    prompt: Parameters<InMemoryChallengeRepository["saveScheduledPrompt"]>[0],
+  ): Promise<void> {
+    this.promptWrites += 1;
+    await super.saveScheduledPrompt(prompt);
+    if (!this.hasFailed && this.promptWrites === 9) {
+      this.hasFailed = true;
+      throw new Error("simulated post-mutation prompt persistence failure");
+    }
+  }
+}
+
+class FailsFirstCloseChallengeSaveRepository extends InMemoryChallengeRepository {
+  private hasFailedClose = false;
+
+  override async saveChallenge(
+    challenge: Parameters<InMemoryChallengeRepository["saveChallenge"]>[0],
+  ): Promise<void> {
+    if (!this.hasFailedClose && challenge.status === "closed") {
+      this.hasFailedClose = true;
+      throw new Error("simulated challenge close failure");
+    }
+
+    await super.saveChallenge(challenge);
+  }
+}
+
+class FailsFirstTwoCloseChallengeSavesRepository extends InMemoryChallengeRepository {
+  private failedCloseCount = 0;
+
+  override async saveChallenge(
+    challenge: Parameters<InMemoryChallengeRepository["saveChallenge"]>[0],
+  ): Promise<void> {
+    if (this.failedCloseCount < 2 && challenge.status === "closed") {
+      this.failedCloseCount += 1;
+      throw new Error("simulated repeated challenge close failure");
+    }
+
+    await super.saveChallenge(challenge);
+  }
+}
+
+class FailsAfterCloseChallengeMutationRepository extends InMemoryChallengeRepository {
+  private hasFailedClose = false;
+
+  override async saveChallenge(
+    challenge: Parameters<InMemoryChallengeRepository["saveChallenge"]>[0],
+  ): Promise<void> {
+    await super.saveChallenge(challenge);
+    if (!this.hasFailedClose && challenge.status === "closed") {
+      this.hasFailedClose = true;
+      throw new Error("simulated post-mutation challenge close failure");
+    }
+  }
+}
 
 async function createFixture() {
   const month = createMonthKey(2026, 4);
@@ -342,6 +426,704 @@ describe("ChallengeService", () => {
     ok(summary.prompts.every((prompt) => prompt.month === fixture.month));
     ok(summary.prompts.every((prompt) => prompt.challengeId === summary.challenge.id));
     equal(summary.prompts.at(-1)?.kind, "month_close");
+  });
+
+  it("repairs missing scheduled prompts when start month is retried after a partial failure", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsPromptPersistenceOnceRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+
+    await rejects(
+      () => service.startMonth({ workspaceId: workspace.id, month }),
+      /simulated prompt persistence failure/,
+    );
+
+    const challenge = await service.startMonth({ workspaceId: workspace.id, month });
+    const prompts = await repository.listScheduledPromptsByChallenge(challenge.id);
+
+    equal(prompts.length, 9);
+    const promptKeys = prompts.map((prompt) => `${prompt.kind}:${prompt.scheduledFor}:${prompt.channelKey}`);
+    equal(new Set(promptKeys).size, 9);
+  });
+
+  it("re-persists deterministic scheduled prompts after a post-mutation prompt failure", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsAfterFinalPromptMutationRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+
+    await rejects(
+      () => service.startMonth({ workspaceId: workspace.id, month }),
+      /simulated post-mutation prompt persistence failure/,
+    );
+    await service.startMonth({ workspaceId: workspace.id, month });
+
+    equal(repository.promptWrites > 9, true);
+    const challenge = await repository.getChallengeByMonth(workspace.id, month);
+    const prompts = await repository.listScheduledPromptsByChallenge(challenge!.id);
+    equal(prompts.length, 9);
+  });
+
+  it("preserves delivered prompt metadata when re-persisting deterministic scheduled prompts", async () => {
+    const fixture = await createFixture();
+    const summary = await fixture.service.getMonthlySummary({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+    });
+    const deliveredPrompt = {
+      ...summary.prompts[0]!,
+      deliveredAt: "2026-04-01T12:00:00.000Z",
+    };
+    await fixture.repository.saveScheduledPrompt(deliveredPrompt);
+
+    await fixture.service.startMonth({ workspaceId: fixture.workspace.id, month: fixture.month });
+    const prompts = await fixture.repository.listScheduledPromptsByChallenge(summary.challenge.id);
+
+    equal(
+      prompts.find((prompt) => prompt.id === deliveredPrompt.id)?.deliveredAt,
+      deliveredPrompt.deliveredAt,
+    );
+  });
+
+  it("does not duplicate carryovers when close month is retried after a partial failure", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsFirstCloseChallengeSaveRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 100,
+    });
+    await service.submitManualRun({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      distanceKm: 80,
+      runDate: "2026-04-04",
+      evidenceUrl: "https://cdn.example/manual-1.png",
+    });
+
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated challenge close failure/,
+    );
+    await service.closeMonth({ workspaceId: workspace.id, month });
+    const nextMonth = createMonthKey(2026, 5);
+    await service.startMonth({ workspaceId: workspace.id, month: nextMonth });
+    const goal = await service.setGoal({
+      workspaceId: workspace.id,
+      month: nextMonth,
+      memberId: member.id,
+      baseGoalKm: 120,
+    });
+
+    equal(goal.carryoverKm, 23);
+    const challenge = await repository.getChallengeByMonth(workspace.id, month);
+    equal((await repository.listMonthlyResultsByChallenge(challenge!.id)).length, 1);
+  });
+
+  it("removes stale carryover distance when a retry closes a month after the goal is recovered", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsFirstCloseChallengeSaveRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 100,
+    });
+    await service.submitManualRun({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      distanceKm: 80,
+      runDate: "2026-04-04",
+      evidenceUrl: "https://cdn.example/manual-1.png",
+    });
+
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated challenge close failure/,
+    );
+    await service.submitManualRun({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      distanceKm: 20,
+      runDate: "2026-04-05",
+      evidenceUrl: "https://cdn.example/manual-2.png",
+    });
+    await service.closeMonth({ workspaceId: workspace.id, month });
+    const nextMonth = createMonthKey(2026, 5);
+    await service.startMonth({ workspaceId: workspace.id, month: nextMonth });
+    const goal = await service.setGoal({
+      workspaceId: workspace.id,
+      month: nextMonth,
+      memberId: member.id,
+      baseGoalKm: 120,
+    });
+
+    equal(goal.carryoverKm, 0);
+  });
+
+  it("retries month close after the repository mutates the challenge before failing", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsAfterCloseChallengeMutationRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 100,
+    });
+
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated post-mutation challenge close failure/,
+    );
+    const summary = await service.closeMonth({ workspaceId: workspace.id, month });
+
+    equal(summary.results.length, 1);
+    equal(summary.results[0]?.generatedCarryoverKm, 115);
+  });
+
+  it("does not add newly registered members to an already-closed month during retry", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsAfterCloseChallengeMutationRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const originalMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: originalMember.id,
+      baseGoalKm: 100,
+    });
+
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated post-mutation challenge close failure/,
+    );
+    const lateMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-late",
+      displayName: "Late Joiner",
+    });
+    await repository.saveMember({
+      ...lateMember,
+      createdAt: "9999-12-31T23:59:59.999Z",
+    });
+    const summary = await service.closeMonth({ workspaceId: workspace.id, month });
+
+    equal(summary.results.length, 1);
+    equal(summary.results.some((result) => result.memberId === originalMember.id), true);
+    equal(summary.results.some((result) => result.memberId === lateMember.id), false);
+    const challenge = await repository.getChallengeByMonth(workspace.id, month);
+    equal((await repository.listMonthlyResultsByChallenge(challenge!.id)).length, 1);
+  });
+
+  it("recovers missing original members when retrying an already-closed partial month", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const john = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    const sarah = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-sarah",
+      displayName: "Sarah",
+    });
+    await repository.saveMember({
+      ...john,
+      createdAt: "2026-04-01T00:00:00.000Z",
+    });
+    await repository.saveMember({
+      ...sarah,
+      createdAt: "2026-04-01T00:00:00.000Z",
+    });
+    const challenge = await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: john.id,
+      baseGoalKm: 100,
+    });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: sarah.id,
+      baseGoalKm: 50,
+    });
+    await repository.saveMonthlyResult({
+      id: "partial-result-john",
+      workspaceId: workspace.id,
+      challengeId: challenge.id,
+      memberId: john.id,
+      completedKm: 0,
+      baseGoalKm: 100,
+      carryoverKm: 0,
+      effectiveGoalKm: 100,
+      hitGoal: false,
+      missedKm: 100,
+      generatedCarryoverKm: 115,
+      noGoalSet: false,
+      closedAt: "2026-04-30T23:59:59.999Z",
+    });
+    await repository.saveChallenge({
+      ...challenge,
+      status: "closed",
+      closedAt: "2026-04-30T23:59:59.999Z",
+    });
+    const lateMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-late",
+      displayName: "Late Joiner",
+    });
+    await repository.saveMember({
+      ...lateMember,
+      createdAt: "9999-12-31T23:59:59.999Z",
+    });
+
+    const summary = await service.closeMonth({ workspaceId: workspace.id, month });
+
+    equal(summary.results.length, 2);
+    equal(summary.results.some((result) => result.memberId === john.id), true);
+    equal(summary.results.some((result) => result.memberId === sarah.id), true);
+    equal(summary.results.some((result) => result.memberId === lateMember.id), false);
+  });
+
+  it("does not add late members when retrying an open month with existing close results", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsFirstCloseChallengeSaveRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const originalMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: originalMember.id,
+      baseGoalKm: 100,
+    });
+
+    await rejects(() => service.closeMonth({ workspaceId: workspace.id, month }), /simulated challenge close failure/);
+    const challenge = await repository.getChallengeByMonth(workspace.id, month);
+    const firstResults = await repository.listMonthlyResultsByChallenge(challenge!.id);
+    const lateMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-late",
+      displayName: "Late Joiner",
+    });
+    await repository.saveMember({
+      ...lateMember,
+      createdAt: "9999-12-31T23:59:59.999Z",
+    });
+
+    const summary = await service.closeMonth({ workspaceId: workspace.id, month });
+
+    equal(firstResults.length, 1);
+    equal(summary.results.length, 1);
+    equal(summary.results.some((result) => result.memberId === originalMember.id), true);
+    equal(summary.results.some((result) => result.memberId === lateMember.id), false);
+    equal((await repository.listMonthlyResultsByChallenge(challenge!.id)).length, 1);
+  });
+
+  it("keeps the original close cutoff stable across repeated open-month close retries", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new FailsFirstTwoCloseChallengeSavesRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const originalMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: originalMember.id,
+      baseGoalKm: 100,
+    });
+
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated repeated challenge close failure/,
+    );
+    const challenge = await repository.getChallengeByMonth(workspace.id, month);
+    const [firstResult] = await repository.listMonthlyResultsByChallenge(challenge!.id);
+    await repository.saveMonthlyResult({
+      ...firstResult!,
+      closedAt: "2026-04-01T00:00:00.000Z",
+    });
+    const lateMember = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-late",
+      displayName: "Late Joiner",
+    });
+    await repository.saveMember({
+      ...lateMember,
+      createdAt: "2026-04-02T00:00:00.000Z",
+    });
+    await rejects(
+      () => service.closeMonth({ workspaceId: workspace.id, month }),
+      /simulated repeated challenge close failure/,
+    );
+
+    const summary = await service.closeMonth({ workspaceId: workspace.id, month });
+
+    equal(summary.results.length, 1);
+    equal(summary.results.some((result) => result.memberId === originalMember.id), true);
+    equal(summary.results.some((result) => result.memberId === lateMember.id), false);
+    equal(summary.results[0]?.closedAt, "2026-04-01T00:00:00.000Z");
+  });
+
+  it("uses one recalculated carryover when legacy duplicate carryover records exist", async () => {
+    const month = createMonthKey(2026, 4);
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    const challenge = await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 100,
+    });
+    await service.submitManualRun({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      distanceKm: 80,
+      runDate: "2026-04-04",
+      evidenceUrl: "https://cdn.example/manual-1.png",
+    });
+    const nextMonth = createMonthKey(2026, 5);
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-1",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: challenge.id,
+      targetMonth: nextMonth,
+      amountKm: 23,
+      createdAt: "2026-05-01T00:00:00.000Z",
+    });
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-2",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: challenge.id,
+      targetMonth: nextMonth,
+      amountKm: 23,
+      createdAt: "2026-05-01T00:00:01.000Z",
+    });
+
+    await service.closeMonth({ workspaceId: workspace.id, month });
+    await service.startMonth({ workspaceId: workspace.id, month: nextMonth });
+    const goal = await service.setGoal({
+      workspaceId: workspace.id,
+      month: nextMonth,
+      memberId: member.id,
+      baseGoalKm: 120,
+    });
+
+    equal(goal.carryoverKm, 23);
+  });
+
+  it("prefers deterministic carryover records when legacy duplicate amounts disagree", async () => {
+    const month = createMonthKey(2026, 5);
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    await service.startMonth({ workspaceId: workspace.id, month });
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-older",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: "source-challenge-1",
+      targetMonth: month,
+      amountKm: 46,
+      createdAt: "2026-05-01T00:00:00.000Z",
+    });
+    await repository.saveCarryoverPenalty({
+      id: `carryover-penalty:source-challenge-1:${member.id}`,
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: "source-challenge-1",
+      targetMonth: month,
+      amountKm: 23,
+      createdAt: "2026-05-01T00:00:01.000Z",
+    });
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-newer",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: "source-challenge-1",
+      targetMonth: month,
+      amountKm: 92,
+      createdAt: "2026-05-01T00:00:02.000Z",
+    });
+
+    const goal = await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 120,
+    });
+
+    equal(goal.carryoverKm, 23);
+  });
+
+  it("keeps the selected legacy carryover authoritative when a retry recalculates it to zero", async () => {
+    const month = createMonthKey(2026, 4);
+    const nextMonth = createMonthKey(2026, 5);
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({
+      name: "Run Club",
+      discordGuildId: "guild-1",
+      timezone: "Australia/Sydney",
+      channelRefs: {
+        rules: "rules",
+        announcements: "announcements",
+        progressLog: "progress-log",
+        leaderboard: "leaderboard",
+        chat: "chat",
+        combined: "combined",
+      },
+    });
+    const member = await service.registerMember({
+      workspaceId: workspace.id,
+      discordUserId: "discord-john",
+      displayName: "John",
+    });
+    const challenge = await service.startMonth({ workspaceId: workspace.id, month });
+    await service.setGoal({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      baseGoalKm: 100,
+    });
+    await service.submitManualRun({
+      workspaceId: workspace.id,
+      month,
+      memberId: member.id,
+      distanceKm: 100,
+      runDate: "2026-04-04",
+      evidenceUrl: "https://cdn.example/manual-1.png",
+    });
+    await repository.saveChallenge({
+      ...challenge,
+      status: "closed",
+      closedAt: "2026-04-30T23:59:59.999Z",
+    });
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-stale",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: challenge.id,
+      targetMonth: nextMonth,
+      amountKm: 23,
+      createdAt: "2026-05-01T00:00:00.000Z",
+    });
+    await repository.saveCarryoverPenalty({
+      id: "legacy-carryover-selected",
+      workspaceId: workspace.id,
+      memberId: member.id,
+      sourceChallengeId: challenge.id,
+      targetMonth: nextMonth,
+      amountKm: 23,
+      createdAt: "2026-05-02T00:00:00.000Z",
+    });
+
+    await service.closeMonth({ workspaceId: workspace.id, month });
+    await service.startMonth({ workspaceId: workspace.id, month: nextMonth });
+    const goal = await service.setGoal({
+      workspaceId: workspace.id,
+      month: nextMonth,
+      memberId: member.id,
+      baseGoalKm: 120,
+    });
+
+    equal(goal.carryoverKm, 0);
   });
 
   it("isolates groups so one workspace does not affect another", async () => {
@@ -696,6 +1478,11 @@ describe("ChallengeService", () => {
     equal(createMonthKeyForDate(instant, "America/Los_Angeles"), "2026-04");
   });
 
+  it("rejects month keys outside canonical YYYY-MM bounds", () => {
+    throws(() => createMonthKey(999, 1), /YYYY-MM/);
+    throws(() => createMonthKey(10000, 1), /YYYY-MM/);
+  });
+
   it("persists challenge state across JSON repository instances", async () => {
     const filePath = `.tmp/test-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
     const firstRepository = new JsonFileChallengeRepository(filePath);
@@ -745,6 +1532,19 @@ describe("ChallengeService", () => {
     ok(payload !== tamperedPayload);
     throws(() => decodeStravaOAuthState(tampered, "secret"));
     throws(() => decodeStravaOAuthState(`${payload}.short`, "secret"));
+    throws(() => decodeStravaOAuthState(`${encoded}.extra`, "secret"));
+    throws(
+      () => decodeStravaOAuthState(`${payload}.${"é".repeat(encoded.split(".")[1].length)}`, "secret"),
+      /Invalid Strava OAuth state/,
+    );
+    throws(
+      () => decodeStravaOAuthState(signStravaOAuthStatePayload({ workspaceId: ["workspace-1"], memberId: "member-1" }, "secret"), "secret"),
+      /Invalid Strava OAuth state payload/,
+    );
+    throws(
+      () => decodeStravaOAuthState(signStravaOAuthStatePayload({ workspaceId: "workspace-1", memberId: 123 }, "secret"), "secret"),
+      /Invalid Strava OAuth state payload/,
+    );
   });
 
   it("paginates Strava activity imports and only returns run-like activities", async () => {
