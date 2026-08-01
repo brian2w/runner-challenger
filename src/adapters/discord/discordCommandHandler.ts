@@ -1,6 +1,7 @@
 import { DomainError } from "../../core/errors.js";
 import { parseMonthInput } from "../../core/time.js";
 import type { MonthKey } from "../../core/types.js";
+import type { RunSummaryCardInput } from "../../cards/runSummaryCard.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
 import type { ChallengeService } from "../../services/challengeService.js";
 import { DiscordPresenter } from "./discordPresenter.js";
@@ -14,6 +15,11 @@ export interface DiscordCommandInput {
   options?: Record<string, string | number | undefined>;
 }
 
+export interface DiscordCommandResponse {
+  content: string;
+  runSummaryCard?: RunSummaryCardInput;
+}
+
 export class DiscordCommandHandler {
   constructor(
     private readonly service: ChallengeService,
@@ -22,6 +28,10 @@ export class DiscordCommandHandler {
   ) {}
 
   async handle(input: DiscordCommandInput): Promise<string> {
+    return (await this.handleDetailed(input)).content;
+  }
+
+  async handleDetailed(input: DiscordCommandInput): Promise<DiscordCommandResponse> {
     try {
       switch (input.commandName) {
         case "goal-set": {
@@ -31,7 +41,9 @@ export class DiscordCommandHandler {
             memberId: input.actorMemberId,
             baseGoalKm: this.requireNumber(input.options, "distance_km"),
           });
-          return `Goal set: ${goal.baseGoalKm}km base + ${goal.carryoverKm}km carryover = ${goal.effectiveGoalKm}km effective target.`;
+          return {
+            content: `Goal set: ${goal.baseGoalKm}km base + ${goal.carryoverKm}km carryover = ${goal.effectiveGoalKm}km effective target.`,
+          };
         }
         case "run-submit": {
           const distanceKm = this.optionalNumber(input.options, "distance_km");
@@ -40,7 +52,9 @@ export class DiscordCommandHandler {
             const ocrDistanceKm = this.optionalNumber(input.options, "ocr_distance_km");
             const ocrRunDate = this.optionalString(input.options, "ocr_run_date");
             if (ocrDistanceKm !== undefined && ocrRunDate) {
-              return `I read ${ocrDistanceKm}km on ${ocrRunDate}. Rerun /run-submit with distance_km:${ocrDistanceKm} run_date:${ocrRunDate}, or type the correct values if OCR misread it.`;
+              return {
+                content: `I read ${ocrDistanceKm}km on ${ocrRunDate}. Rerun /run-submit with distance_km:${ocrDistanceKm} run_date:${ocrRunDate}, or type the correct values if OCR misread it.`,
+              };
             }
             throw new DomainError(
               "Add distance_km and run_date, or upload a clearer proof screenshot so OCR can read them.",
@@ -58,6 +72,14 @@ export class DiscordCommandHandler {
           });
           return this.renderRunReceipt(input.workspaceId, submission);
         }
+        case "profile-set": {
+          await this.service.setMemberProfileImage({
+            workspaceId: input.workspaceId,
+            memberId: input.actorMemberId,
+            imageUrl: this.requireString(input.options, "image_url"),
+          });
+          return { content: "Profile image updated." };
+        }
         case "leaderboard": {
           const request = {
             workspaceId: input.workspaceId,
@@ -67,7 +89,7 @@ export class DiscordCommandHandler {
             this.service.getLeaderboard(request),
             this.service.getGroupProgress(request),
           ]);
-          return this.presenter.renderLeaderboard(input.month, leaderboard, group);
+          return { content: this.presenter.renderLeaderboard(input.month, leaderboard, group) };
         }
         case "status": {
           const summary = await this.service.getMonthlySummary({
@@ -79,7 +101,7 @@ export class DiscordCommandHandler {
           if (!status) {
             throw new DomainError("Member status was not found.");
           }
-          return this.presenter.renderMemberStatus(status);
+          return { content: this.presenter.renderMemberStatus(status) };
         }
         case "punishments": {
           const memberId = this.optionalString(input.options, "member_id") ?? input.actorMemberId;
@@ -92,11 +114,11 @@ export class DiscordCommandHandler {
             this.repository.listMembersByWorkspace(input.workspaceId),
           ]);
           const memberNames = new Map(members.map((member) => [member.id, member.displayName]));
-          return this.presenter.renderPunishments(input.month, punishments, memberNames, memberNames);
+          return { content: this.presenter.renderPunishments(input.month, punishments, memberNames, memberNames) };
         }
         case "leader-help": {
           const isLeader = await this.isLeader(input);
-          return this.presenter.renderLeaderHelp(input.month, { isLeader, isAdmin: Boolean(input.isAdmin) });
+          return { content: this.presenter.renderLeaderHelp(input.month, { isLeader, isAdmin: Boolean(input.isAdmin) }) };
         }
         case "admin-start-month":
           this.requireAdmin(input);
@@ -106,7 +128,7 @@ export class DiscordCommandHandler {
               workspaceId: input.workspaceId,
               month,
             });
-            return `Month ${month} is ready. ${this.presenter.renderMonthStartPrompt(month)}`;
+            return { content: `Month ${month} is ready. ${this.presenter.renderMonthStartPrompt(month)}` };
           }
         case "admin-close-month": {
           this.requireAdmin(input);
@@ -116,10 +138,12 @@ export class DiscordCommandHandler {
             month,
           });
           const members = await this.repository.listMembersByWorkspace(input.workspaceId);
-          return this.presenter.renderMonthClose(
-            closeSummary,
-            new Map(members.map((member) => [member.id, member.displayName])),
-          );
+          return {
+            content: this.presenter.renderMonthClose(
+              closeSummary,
+              new Map(members.map((member) => [member.id, member.displayName])),
+            ),
+          };
         }
         case "admin-assign-leader": {
           this.requireAdmin(input);
@@ -129,7 +153,7 @@ export class DiscordCommandHandler {
             memberId: this.requireString(input.options, "member_id"),
           });
           const member = await this.repository.getMemberById(assignment.memberId);
-          return `Leader assigned for ${input.month}: ${member?.displayName ?? assignment.memberId}`;
+          return { content: `Leader assigned for ${input.month}: ${member?.displayName ?? assignment.memberId}` };
         }
         case "admin-override-run": {
           this.requireAdmin(input);
@@ -142,7 +166,7 @@ export class DiscordCommandHandler {
             distanceKm: this.optionalNumber(input.options, "distance_km"),
             note: "Adjusted via admin override command.",
           });
-          return `Submission ${updated.id} updated to ${updated.distanceKm}km with status ${updated.status}.`;
+          return { content: `Submission ${updated.id} updated to ${updated.distanceKm}km with status ${updated.status}.` };
         }
         case "leader-record-punishment": {
           await this.requireLeaderOrAdmin(input);
@@ -154,7 +178,7 @@ export class DiscordCommandHandler {
             note: this.requireString(input.options, "note"),
           });
           const member = await this.repository.getMemberById(record.memberId);
-          return `Punishment recorded for ${member?.displayName ?? record.memberId}.`;
+          return { content: `Punishment recorded for ${member?.displayName ?? record.memberId}.` };
         }
         case "leader-remove-punishment": {
           await this.requireLeader(input);
@@ -164,7 +188,7 @@ export class DiscordCommandHandler {
             punishmentId: this.requireString(input.options, "punishment_id"),
           });
           const member = await this.repository.getMemberById(punishment.memberId);
-          return `Punishment removed for ${member?.displayName ?? punishment.memberId}.`;
+          return { content: `Punishment removed for ${member?.displayName ?? punishment.memberId}.` };
         }
         case "admin-record-punishment": {
           await this.requireLeaderOrAdmin(input);
@@ -176,14 +200,14 @@ export class DiscordCommandHandler {
             note: this.requireString(input.options, "note"),
           });
           const member = await this.repository.getMemberById(record.memberId);
-          return `Punishment recorded for ${member?.displayName ?? record.memberId}.`;
+          return { content: `Punishment recorded for ${member?.displayName ?? record.memberId}.` };
         }
         default:
           throw new DomainError(`Unknown command: ${input.commandName}`);
       }
     } catch (error) {
       if (error instanceof DomainError) {
-        return `Error: ${error.message}`;
+        return { content: `Error: ${error.message}` };
       }
       throw error;
     }
@@ -262,15 +286,33 @@ export class DiscordCommandHandler {
     distanceKm: number;
     runDate: string;
     evidenceLabel?: string;
-  }): Promise<string> {
-    const statuses = await this.service.getMemberStatuses(workspaceId, submission.challengeId);
+  }): Promise<DiscordCommandResponse> {
+    const [statuses, group, member] = await Promise.all([
+      this.service.getMemberStatuses(workspaceId, submission.challengeId),
+      this.service.getGroupProgress({
+        workspaceId,
+        month: submission.runDate.slice(0, 7) as MonthKey,
+      }),
+      this.repository.getMemberById(submission.memberId),
+    ]);
     const status = statuses.find((candidate) => candidate.memberId === submission.memberId);
     const proofLabel = submission.evidenceLabel ? `\nProof: ${submission.evidenceLabel}` : "";
     const progress = status
       ? `\nProgress: ${status.completedKm}/${status.effectiveGoalKm}km`
       : "";
 
-    return `Run logged: ${submission.distanceKm}km on ${submission.runDate}${proofLabel}${progress}\nSubmission ID: ${submission.id}`;
+    return {
+      content: `Run logged: ${submission.distanceKm}km on ${submission.runDate}${proofLabel}${progress}\nSubmission ID: ${submission.id}`,
+      runSummaryCard: {
+        submissionId: submission.id,
+        runDate: submission.runDate,
+        distanceKm: submission.distanceKm,
+        remainingPersonalKm: status ? status.effectiveGoalKm - status.completedKm : 0,
+        remainingGroupKm: group.effectiveGoalKm - group.completedKm,
+        submitterName: member?.displayName ?? status?.displayName ?? "Runner",
+        profileImageUrl: member?.profileImageUrl,
+      },
+    };
   }
 
   private requireNumber(options: Record<string, string | number | undefined> | undefined, key: string): number {

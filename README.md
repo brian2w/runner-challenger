@@ -16,6 +16,7 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 | --- | --- |
 | `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
 | `/run-submit proof [distance_km] [run_date] [source] [note]` | Log a run with phone screenshot proof. If distance/date are omitted, the bot can privately read the screenshot and show Log Run / Cancel buttons before saving. |
+| `/profile-set image_url` | Set a custom profile image URL for status thumbnails and future richer leaderboard cards. |
 | `/leaderboard` | Show current standings for the active month. |
 | `/status` | Show your current month progress against your goal. |
 | `/punishments [member]` | Show recorded punishments for yourself or another member. |
@@ -66,6 +67,18 @@ Users submit runs directly in Discord:
 Typed `distance_km` and `run_date` log immediately. If those fields are omitted and OCR can read the screenshot, the bot privately asks the user to confirm the detected distance/date with a `Log Run` button. If OCR cannot read the screenshot clearly, rerun the command with the values typed manually.
 
 The OCR boundary is provider-based so Tesseract can be replaced later with PaddleOCR, native mobile OCR, or a hosted vision model without changing challenge rules.
+
+After a run is logged, the Discord reply includes a generated `Run Summary` PNG. The card uses `assets/run-summary/template.png`, fills the run date, run distance, remaining personal distance, remaining group distance, and rotates through bundled local incentive artwork.
+
+## Profile Images
+
+The bot saves each member's Discord avatar URL when they use a command. Users can override that with:
+
+```text
+/profile-set image_url:https://example.com/avatar.png
+```
+
+Custom image URLs must be public `http` or `https` URLs. `/status` uses the saved image as a Discord thumbnail. The text leaderboard keeps the compact row layout for now; the saved profile image data is ready for a future generated leaderboard card.
 
 ### Local OCR
 

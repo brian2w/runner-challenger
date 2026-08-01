@@ -30,6 +30,11 @@ export const slashCommands: SlashCommandDefinition[] = [
     ],
   },
   {
+    name: "profile-set",
+    description: "Set a custom profile image URL for status and future leaderboard cards.",
+    options: [{ name: "image_url", description: "Public http or https image URL.", type: "string", required: true }],
+  },
+  {
     name: "leaderboard",
     description: "Show current standings for the month.",
   },

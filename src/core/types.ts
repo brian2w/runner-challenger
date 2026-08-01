@@ -4,6 +4,7 @@ export type ChallengeKind = "monthly_distance_km";
 export type ChallengeStatus = "open" | "closed";
 export type EvidenceSourceType = "proof_attachment";
 export type SubmissionStatus = "accepted" | "corrected" | "removed";
+export type ProfileImageSource = "discord_avatar" | "custom_url";
 export type PromptKind =
   | "month_start"
   | "weekly_reminder"
@@ -31,6 +32,8 @@ export interface Member {
   workspaceId: string;
   discordUserId: string;
   displayName: string;
+  profileImageUrl?: string;
+  profileImageSource?: ProfileImageSource;
   isBot?: boolean;
   createdAt: string;
 }
@@ -136,6 +139,7 @@ export interface LeaderboardRow {
   percentComplete: number;
   rank: number;
   hasGoal: boolean;
+  isLeader?: boolean;
 }
 
 export interface GroupProgressSummary {

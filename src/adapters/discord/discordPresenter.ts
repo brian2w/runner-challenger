@@ -15,10 +15,12 @@ function renderProgressBar(percent: number): string {
 export class DiscordPresenter {
   renderLeaderboard(month: string, leaderboard: LeaderboardRow[], group?: GroupProgressSummary): string {
     const lines = leaderboard.map(
-      (row) =>
-        `${row.rank}. ${row.displayName}: ${row.completedKm}/${row.effectiveGoalKm}km ${renderProgressBar(
+      (row) => {
+        const leaderMarker = row.isLeader ? " 👑" : "";
+        return `${row.rank}. ${row.displayName}${leaderMarker}: ${row.completedKm}/${row.effectiveGoalKm}km ${renderProgressBar(
           row.percentComplete,
-        )} ${row.percentComplete}%${row.hasGoal ? "" : " (no goal set)"}`,
+        )} ${row.percentComplete}%${row.hasGoal ? "" : " (no goal set)"}`;
+      },
     );
     const groupLine = group
       ? [

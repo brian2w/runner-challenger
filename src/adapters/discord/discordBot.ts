@@ -11,16 +11,18 @@ import {
   Routes,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type InteractionReplyOptions,
   type User,
 } from "discord.js";
 import { DomainError } from "../../core/errors.js";
 import { createMonthKeyForDate } from "../../core/time.js";
 import type { DiscordWorkspace, Member, MonthKey } from "../../core/types.js";
+import { renderRunSummaryCard } from "../../cards/runSummaryCard.js";
 import type { OcrProvider } from "../../ocr/ocrProvider.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
 import type { ChallengeService } from "../../services/challengeService.js";
 import { slashCommands, type SlashCommandDefinition, type SlashCommandOption } from "./commandCatalog.js";
-import { DiscordCommandHandler } from "./discordCommandHandler.js";
+import { DiscordCommandHandler, type DiscordCommandResponse } from "./discordCommandHandler.js";
 import { PendingRunProofStore, type PendingRunProof } from "./pendingRunProofStore.js";
 import { buildRunProofConfirmationDraft } from "./runProofConfirmation.js";
 import { resolveRunSubmitOptions } from "./runSubmitOptions.js";
@@ -120,7 +122,7 @@ export class RunnerChallengeDiscordBot {
         return;
       }
 
-      const reply = await this.handler.handle({
+      const response = await this.handler.handleDetailed({
         workspaceId: workspace.id,
         month,
         actorMemberId: actor.id,
@@ -129,7 +131,11 @@ export class RunnerChallengeDiscordBot {
         options,
       });
 
-      await this.sendInteractionResponse(interaction, reply);
+      await this.sendInteractionResponse(
+        interaction,
+        response.content,
+        await this.responseExtras(interaction.commandName, actor, response),
+      );
     } catch (error) {
       const content = error instanceof Error ? `Error: ${error.message}` : "Error: unexpected failure.";
       if (interaction.deferred || interaction.replied) {
@@ -181,7 +187,7 @@ export class RunnerChallengeDiscordBot {
       }
 
       try {
-        const reply = await this.handler.handle({
+        const response = await this.handler.handleDetailed({
           workspaceId: draft.workspaceId,
           month: draft.month,
           actorMemberId: draft.actorMemberId,
@@ -194,7 +200,16 @@ export class RunnerChallengeDiscordBot {
             note: draft.note,
           },
         });
-        await interaction.update({ content: reply, components: [] });
+        if (response.content.startsWith("Error:")) {
+          await interaction.update({ content: response.content, components: [] });
+          return;
+        }
+
+        await interaction.update({ content: "Run logged. Posted to the channel.", components: [] });
+        await interaction.followUp({
+          content: response.content,
+          ...(await this.responseExtras("run-submit", actor, response)),
+        });
       } catch (error) {
         const content = error instanceof Error ? `Error: ${error.message}` : "Error: unexpected failure.";
         await interaction.update({ content, components: [] });
@@ -219,6 +234,8 @@ export class RunnerChallengeDiscordBot {
         return { distance_km: interaction.options.getNumber("distance_km", true) };
       case "run-submit":
         return this.runSubmitOptions(interaction, month);
+      case "profile-set":
+        return { image_url: interaction.options.getString("image_url", true) };
       case "admin-start-month":
       case "admin-close-month":
         return { month: interaction.options.getString("month", true) };
@@ -360,14 +377,19 @@ export class RunnerChallengeDiscordBot {
     };
   }
 
-  private async sendInteractionResponse(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
+  private async sendInteractionResponse(
+    interaction: ChatInputCommandInteraction,
+    content: string,
+    extras: Pick<InteractionReplyOptions, "embeds" | "files"> = {},
+  ): Promise<void> {
     if (interaction.deferred) {
-      await interaction.editReply({ content });
+      await interaction.editReply({ content, ...extras });
       return;
     }
 
     await interaction.reply({
       content,
+      ...extras,
       ephemeral: content.startsWith("Error:"),
     });
   }
@@ -378,10 +400,20 @@ export class RunnerChallengeDiscordBot {
     }
     const discordUserId = user.id;
     const displayName = user.globalName ?? user.username;
+    const discordAvatarUrl = this.discordAvatarUrl(user);
     const existing = await this.repository.getMemberByDiscordUserId(workspace.id, discordUserId);
     if (existing) {
-      if (existing.displayName !== displayName) {
-        const updated = { ...existing, displayName };
+      const shouldRefreshAvatar =
+        Boolean(discordAvatarUrl) &&
+        existing.profileImageSource !== "custom_url" &&
+        existing.profileImageUrl !== discordAvatarUrl;
+      if (existing.displayName !== displayName || shouldRefreshAvatar) {
+        const updated = {
+          ...existing,
+          displayName,
+          profileImageUrl: shouldRefreshAvatar ? discordAvatarUrl : existing.profileImageUrl,
+          profileImageSource: shouldRefreshAvatar ? "discord_avatar" as const : existing.profileImageSource,
+        };
         await this.repository.saveMember(updated);
         return updated;
       }
@@ -392,7 +424,40 @@ export class RunnerChallengeDiscordBot {
       workspaceId: workspace.id,
       discordUserId,
       displayName,
+      profileImageUrl: discordAvatarUrl,
+      profileImageSource: discordAvatarUrl ? "discord_avatar" : undefined,
     });
+  }
+
+  private async responseExtras(
+    commandName: string,
+    actor: Member,
+    response: DiscordCommandResponse,
+  ): Promise<Pick<InteractionReplyOptions, "embeds" | "files">> {
+    const extras: Pick<InteractionReplyOptions, "embeds" | "files"> = {};
+    if (commandName === "status" && actor.profileImageUrl) {
+      extras.embeds = [
+        {
+          thumbnail: { url: actor.profileImageUrl },
+        },
+      ];
+    }
+
+    if (response.runSummaryCard) {
+      const card = await renderRunSummaryCard(response.runSummaryCard);
+      extras.files = [
+        {
+          attachment: card.buffer,
+          name: card.fileName,
+        },
+      ];
+    }
+
+    return extras;
+  }
+
+  private discordAvatarUrl(user: User): string | undefined {
+    return user.displayAvatarURL();
   }
 
   private isAdmin(interaction: ChatInputCommandInteraction): boolean {

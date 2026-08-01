@@ -23,6 +23,8 @@ interface TestBotInternals {
 interface ReplyPayload {
   content?: string;
   components?: unknown[];
+  embeds?: Array<{ thumbnail?: { url?: string } }>;
+  files?: Array<{ attachment?: Buffer; name?: string }>;
   ephemeral?: boolean;
 }
 
@@ -55,13 +57,52 @@ function config(): DiscordBotConfig {
   };
 }
 
-function user(): User {
+function user(avatarUrl = "https://cdn.example/avatars/runner.png"): User {
   return {
     id: "runner-1",
     bot: false,
     username: "runner",
     globalName: "Runner One",
+    displayAvatarURL: () => avatarUrl,
   } as User;
+}
+
+function statusInteraction(runner: User) {
+  const replies: ReplyPayload[] = [];
+  const edits: ReplyPayload[] = [];
+  const interaction = {
+    guildId: "guild-1",
+    commandName: "status",
+    user: runner,
+    deferred: false,
+    replied: false,
+    memberPermissions: { has: () => false },
+    options: {
+      getAttachment: () => null,
+      getNumber: () => null,
+      getString: () => null,
+      getUser: () => null,
+    },
+    async deferReply() {
+      this.deferred = true;
+    },
+    async editReply(payload: ReplyPayload) {
+      edits.push(payload);
+    },
+    async reply(payload: ReplyPayload) {
+      this.replied = true;
+      replies.push(payload);
+    },
+    async followUp(payload: ReplyPayload) {
+      replies.push(payload);
+    },
+  };
+
+  return {
+    interaction: interaction as unknown as ChatInputCommandInteraction,
+    replies,
+    edits,
+  };
 }
 
 function runSubmitInteraction(runner: User) {
@@ -111,6 +152,7 @@ function runSubmitInteraction(runner: User) {
 function buttonInteraction(customId: string, runner: User) {
   const replies: ReplyPayload[] = [];
   const updates: ReplyPayload[] = [];
+  const followUps: ReplyPayload[] = [];
   const interaction: TestButtonInteraction = {
     guildId: "guild-1",
     customId,
@@ -125,11 +167,11 @@ function buttonInteraction(customId: string, runner: User) {
       updates.push(payload);
     },
     async followUp(payload: ReplyPayload) {
-      replies.push(payload);
+      followUps.push(payload);
     },
   };
 
-  return { interaction, replies, updates };
+  return { interaction, replies, updates, followUps };
 }
 
 function customIds(payload: ReplyPayload): string[] {
@@ -159,6 +201,9 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
 
     const workspace = await repository.getWorkspaceByGuildId("guild-1");
     ok(workspace);
+    const member = await repository.getMemberByDiscordUserId(workspace.id, runner.id);
+    equal(member?.profileImageUrl, "https://cdn.example/avatars/runner.png");
+    equal(member?.profileImageSource, "discord_avatar");
     const challenge = await repository.getChallengeByMonth(workspace.id, "2026-07");
     ok(challenge);
     equal((await repository.listSubmissionsByChallenge(challenge.id)).length, 0);
@@ -168,8 +213,13 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     const firstConfirm = buttonInteraction(confirmId, runner);
     await internals.handleButtonInteraction(firstConfirm.interaction);
 
-    match(firstConfirm.updates[0]?.content ?? "", /Run logged: 13\.78km on 2026-07-05/);
+    match(firstConfirm.updates[0]?.content ?? "", /Run logged. Posted to the channel./);
     equal(firstConfirm.updates[0]?.components?.length, 0);
+    equal(firstConfirm.updates[0]?.files, undefined);
+    match(firstConfirm.followUps[0]?.content ?? "", /Run logged: 13\.78km on 2026-07-05/);
+    equal(firstConfirm.followUps[0]?.ephemeral, undefined);
+    equal(firstConfirm.followUps[0]?.files?.[0]?.name?.startsWith("run-summary-"), true);
+    ok(firstConfirm.followUps[0]?.files?.[0]?.attachment instanceof Buffer);
     const submissions = await repository.listSubmissionsByChallenge(challenge.id);
     equal(submissions.length, 1);
     equal(submissions[0]?.evidenceUrl, "https://cdn.example/run.png");
@@ -180,5 +230,21 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     equal(duplicateConfirm.replies[0]?.content, "This run confirmation was already handled.");
     equal(duplicateConfirm.replies[0]?.ephemeral, true);
     equal((await repository.listSubmissionsByChallenge(challenge.id)).length, 1);
+  });
+
+  it("shows the saved profile image on status replies", async () => {
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const bot = new RunnerChallengeDiscordBot(config(), service, repository);
+    const internals = bot as unknown as TestBotInternals;
+    internals.currentMonth = () => "2026-07";
+    internals.currentDate = () => "2026-07-05";
+    const runner = user("https://cdn.example/avatars/status.png");
+
+    const status = statusInteraction(runner);
+    await internals.handleInteraction(status.interaction);
+
+    match(status.replies[0]?.content ?? "", /Runner One: 0km logged/);
+    equal(status.replies[0]?.embeds?.[0]?.thumbnail?.url, "https://cdn.example/avatars/status.png");
   });
 });

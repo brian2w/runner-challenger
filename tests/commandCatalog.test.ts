@@ -9,6 +9,7 @@ describe("slashCommands", () => {
     deepEqual(commandNames, [
       "goal-set",
       "run-submit",
+      "profile-set",
       "leaderboard",
       "status",
       "punishments",

@@ -1176,10 +1176,12 @@ describe("ChallengeService", () => {
     const memberStatuses = await fixture.service.getMemberStatuses(fixture.workspace.id, monthlySummary.challenge.id);
     const statusMessage = presenter.renderMemberStatus(memberStatuses.find((status) => status.memberId === fixture.john.id)!);
 
-    ok(leaderboardMessage.includes("John: 40/100km"));
+    ok(leaderboardMessage.includes("John 👑: 40/100km"));
     ok(leaderboardMessage.includes("[👟👟👟👟······]"));
     ok(statusMessage.includes("40/100km"));
     ok(statusMessage.includes("[👟👟👟👟······]"));
+    equal(monthlySummary.leaderboard.find((row) => row.memberId === fixture.john.id)?.isLeader, true);
+    equal(monthlySummary.leaderboard.find((row) => row.memberId === fixture.sarah.id)?.isLeader, false);
     deepEqual(
       monthlySummary.leaderboard.map((row) => row.displayName),
       ["John", "Sarah", "Mike"],
@@ -1210,18 +1212,46 @@ describe("ChallengeService", () => {
         proof: "https://cdn.example/12k.png",
       },
     });
+    const runResponse = await handler.handleDetailed({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "run-submit",
+      options: {
+        distance_km: 3.5,
+        run_date: "2026-04-13",
+        proof: "https://cdn.example/3k.png",
+      },
+    });
+    const profileReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "profile-set",
+      options: {
+        image_url: "https://cdn.example/avatars/john.png",
+      },
+    });
     const boardReply = await handler.handle({
       workspaceId: fixture.workspace.id,
       month: fixture.month,
       actorMemberId: fixture.john.id,
       commandName: "leaderboard",
     });
+    const updatedMember = await fixture.repository.getMemberById(fixture.john.id);
 
     ok(goalReply.includes("90km"));
     ok(runReply.includes("Run logged: 12km on 2026-04-12"));
+    equal(runResponse.runSummaryCard?.runDate, "2026-04-13");
+    equal(runResponse.runSummaryCard?.distanceKm, 3.5);
+    equal(runResponse.runSummaryCard?.remainingPersonalKm, 74.5);
+    equal(runResponse.runSummaryCard?.submitterName, "John");
+    ok(profileReply.includes("Profile image updated."));
+    equal(updatedMember?.profileImageUrl, "https://cdn.example/avatars/john.png");
+    equal(updatedMember?.profileImageSource, "custom_url");
     ok(boardReply.includes("Group:"));
-    ok(boardReply.includes("12/90km"));
-    ok(boardReply.includes("John: 12/90km"));
+    ok(boardReply.includes("15.5/90km"));
+    ok(boardReply.includes("John 👑: 15.5/90km"));
   });
 
   it("returns a useful receipt when a proof-backed run is submitted through Discord", async () => {
@@ -1439,7 +1469,7 @@ describe("ChallengeService", () => {
     equal(updated.displayName, "Johnny");
   });
 
-  it("rejects invalid command month, non-finite goal distance, and out-of-month run dates", async () => {
+  it("rejects invalid command month, non-finite goal distance, out-of-month runs, and invalid profile images", async () => {
     const fixture = await createFixture();
     const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
 
@@ -1473,10 +1503,20 @@ describe("ChallengeService", () => {
         proof: "https://cdn.example/wrong-month.png",
       },
     });
+    const invalidProfileReply = await handler.handle({
+      workspaceId: fixture.workspace.id,
+      month: fixture.month,
+      actorMemberId: fixture.john.id,
+      commandName: "profile-set",
+      options: {
+        image_url: "ftp://cdn.example/avatar.png",
+      },
+    });
 
     ok(invalidMonthReply.includes("Invalid month"));
     ok(invalidGoalReply.startsWith("Error:"));
     ok(invalidRunReply.includes("inside the challenge month"));
+    ok(invalidProfileReply.includes("valid http or https URL"));
   });
 
   it("uses the latest leader assignment when the leader changes", async () => {

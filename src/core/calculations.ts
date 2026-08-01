@@ -49,7 +49,7 @@ export function buildMemberMonthStatuses(
   });
 }
 
-export function buildLeaderboardRows(statuses: MemberMonthStatus[]): LeaderboardRow[] {
+export function buildLeaderboardRows(statuses: MemberMonthStatus[], leaderId?: string): LeaderboardRow[] {
   return [...statuses]
     .sort((left, right) => {
       const rightPercent = right.effectiveGoalKm === 0 ? 0 : right.completedKm / right.effectiveGoalKm;
@@ -69,6 +69,7 @@ export function buildLeaderboardRows(statuses: MemberMonthStatus[]): Leaderboard
         status.effectiveGoalKm === 0 ? 0 : roundKm((status.completedKm / status.effectiveGoalKm) * 100),
       rank: index + 1,
       hasGoal: status.hasGoal,
+      isLeader: status.memberId === leaderId,
     }));
 }
 

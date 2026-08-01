@@ -52,15 +52,23 @@ export class ChallengeService {
     workspaceId: string;
     discordUserId: string;
     displayName: string;
+    profileImageUrl?: string;
+    profileImageSource?: Member["profileImageSource"];
     isBot?: boolean;
   }): Promise<Member> {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getMemberByDiscordUserId(input.workspaceId, input.discordUserId);
     if (existing) {
       const nextIsBot = input.isBot ?? existing.isBot;
+      const nextProfileImageUrl = input.profileImageUrl ?? existing.profileImageUrl;
+      const nextProfileImageSource = input.profileImageUrl
+        ? input.profileImageSource ?? "custom_url"
+        : existing.profileImageSource;
       if (
         existing.displayName === input.displayName &&
-        existing.isBot === nextIsBot
+        existing.isBot === nextIsBot &&
+        existing.profileImageUrl === nextProfileImageUrl &&
+        existing.profileImageSource === nextProfileImageSource
       ) {
         return existing;
       }
@@ -68,6 +76,8 @@ export class ChallengeService {
       const updated: Member = {
         ...existing,
         displayName: input.displayName,
+        profileImageUrl: nextProfileImageUrl,
+        profileImageSource: nextProfileImageSource,
         isBot: nextIsBot,
       };
       await this.repository.saveMember(updated);
@@ -79,11 +89,28 @@ export class ChallengeService {
       workspaceId: input.workspaceId,
       discordUserId: input.discordUserId,
       displayName: input.displayName,
+      profileImageUrl: input.profileImageUrl,
+      profileImageSource: input.profileImageUrl ? input.profileImageSource ?? "custom_url" : undefined,
       isBot: input.isBot,
       createdAt: nowIso(),
     };
     await this.repository.saveMember(member);
     return member;
+  }
+
+  async setMemberProfileImage(input: {
+    workspaceId: string;
+    memberId: string;
+    imageUrl: string;
+  }): Promise<Member> {
+    const member = await this.requireParticipantMember(input.memberId, input.workspaceId);
+    const updated: Member = {
+      ...member,
+      profileImageUrl: this.requireHttpUrl(input.imageUrl),
+      profileImageSource: "custom_url",
+    };
+    await this.repository.saveMember(updated);
+    return updated;
   }
 
   async startMonth(input: { workspaceId: string; month: MonthKey }): Promise<MonthlyChallenge> {
@@ -365,8 +392,11 @@ export class ChallengeService {
 
   async getLeaderboard(input: { workspaceId: string; month: MonthKey }): Promise<LeaderboardRow[]> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    const statuses = await this.getMemberStatuses(input.workspaceId, challenge.id);
-    return buildLeaderboardRows(statuses);
+    const [statuses, leader] = await Promise.all([
+      this.getMemberStatuses(input.workspaceId, challenge.id),
+      this.repository.getLeaderAssignmentByChallenge(challenge.id),
+    ]);
+    return buildLeaderboardRows(statuses, leader?.memberId);
   }
 
   async getGroupProgress(input: { workspaceId: string; month: MonthKey }): Promise<GroupProgressSummary> {
@@ -566,6 +596,18 @@ export class ChallengeService {
       throw new DomainError("Bot accounts cannot participate in challenges.");
     }
     return member;
+  }
+
+  private requireHttpUrl(value: string): string {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Unsupported protocol.");
+      }
+      return url.toString();
+    } catch {
+      throw new DomainError("Profile image URL must be a valid http or https URL.");
+    }
   }
 
   private async requireChallenge(workspaceId: string, month: MonthKey): Promise<MonthlyChallenge> {
