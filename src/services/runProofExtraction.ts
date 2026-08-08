@@ -57,10 +57,6 @@ function extractDistanceKm(text: string): number | undefined {
 }
 
 function extractRunDate(text: string, options: RunProofExtractionOptions): string | undefined {
-  if (/\btoday\b/i.test(text) && options.fallbackDate) {
-    return options.fallbackDate;
-  }
-
   const isoMatch = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
   if (isoMatch) {
     return formatIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
@@ -83,6 +79,13 @@ function extractRunDate(text: string, options: RunProofExtractionOptions): strin
     if (date) {
       return date;
     }
+  }
+
+  if (/\btoday\b/i.test(text) && options.fallbackDate) {
+    return options.fallbackDate;
+  }
+  if (/\byesterday\b/i.test(text) && options.fallbackDate) {
+    return shiftIsoDate(options.fallbackDate, -1);
   }
 
   return undefined;
@@ -119,4 +122,14 @@ function formatIsoDate(year: number, month: number, day: number): string | undef
   return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day
     .toString()
     .padStart(2, "0")}`;
+}
+
+function shiftIsoDate(isoDate: string, dayOffset: number): string | undefined {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + dayOffset));
+  return formatIsoDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
