@@ -51,4 +51,38 @@ describe("extractRunProofFields", () => {
       runDate: "2026-07-05",
     });
   });
+
+  it("uses the previous fallback date when OCR text says yesterday", () => {
+    const result = extractRunProofFields("Yesterday at 8:00 AM\nDistance\n5.06 km", {
+      fallbackDate: "2026-07-19",
+    });
+
+    deepEqual(result, {
+      distanceKm: 5.06,
+      runDate: "2026-07-18",
+    });
+  });
+
+  it("handles yesterday across month and year boundaries", () => {
+    const result = extractRunProofFields("YESTERDAY at 11:30 PM\nDistance\n3.2 km", {
+      fallbackDate: "2026-01-01",
+    });
+
+    deepEqual(result, {
+      distanceKm: 3.2,
+      runDate: "2025-12-31",
+    });
+  });
+
+  it("prefers an explicit event date over a relative activity label", () => {
+    const result = extractRunProofFields("Yesterday at 8:00 AM\nJul 18\nDistance\n5.06 km", {
+      fallbackDate: "2026-08-08",
+      fallbackYear: 2026,
+    });
+
+    deepEqual(result, {
+      distanceKm: 5.06,
+      runDate: "2026-07-18",
+    });
+  });
 });
