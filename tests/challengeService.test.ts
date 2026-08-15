@@ -1281,7 +1281,7 @@ describe("ChallengeService", () => {
     ok(reply.includes("Run logged: 7.2km on 2026-04-05"));
     ok(reply.includes("Proof: Apple Fitness"));
     ok(reply.includes("Progress: 7.2/50km"));
-    ok(reply.includes("Submission ID:"));
+    ok(!reply.includes("Submission ID:"));
   });
 
   it("shows OCR suggestions without saving when typed run fields are missing", async () => {
