@@ -8,8 +8,31 @@ import type {
 } from "../../core/types.js";
 
 function renderProgressBar(percent: number): string {
-  const filled = Math.min(Math.round(percent / 10), 10);
-  return `[${"👟".repeat(filled)}${"·".repeat(10 - filled)}]`;
+  const ticks = Math.max(0, Math.round(percent / 10));
+  if (ticks < 10) {
+    const winds = Math.max(0, ticks - 1);
+    const shoe = ticks > 0 ? "👟" : "";
+    return `[${"💨".repeat(winds)}${shoe}${"▫️".repeat(10 - ticks)}]`;
+  }
+  if (ticks < 20) {
+    const demons = ticks - 10;
+    return `[${"😈".repeat(demons)}${"✅".repeat(10 - demons)}]`;
+  }
+  if (ticks < 30) {
+    const phoenixes = ticks - 20;
+    return `[${"🐦‍🔥".repeat(phoenixes)}${"😈".repeat(10 - phoenixes)}]`;
+  }
+  const goats = Math.min(ticks - 30, 10);
+  return `[${"🐐".repeat(goats)}${"🐦‍🔥".repeat(10 - goats)}]`;
+}
+
+function renderMonthName(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
 }
 
 export class DiscordPresenter {
@@ -17,18 +40,13 @@ export class DiscordPresenter {
     const lines = leaderboard.map(
       (row) => {
         const leaderMarker = row.isLeader ? " 👑" : "";
-        return `${row.rank}. ${row.displayName}${leaderMarker}: ${row.completedKm}/${row.effectiveGoalKm}km ${renderProgressBar(
-          row.percentComplete,
-        )} ${row.percentComplete}%${row.hasGoal ? "" : " (no goal set)"}`;
+        return `**#${row.rank} · ${row.displayName}${leaderMarker}**\n${row.completedKm}/${row.effectiveGoalKm}km · ${row.percentComplete}%${row.hasGoal ? "" : " (no goal set)"}\n${renderProgressBar(row.percentComplete)}`;
       },
     );
-    const groupLine = group
-      ? [
-          `**Group:** ${group.completedKm}/${group.effectiveGoalKm}km ${renderProgressBar(group.percentComplete)} ${group.percentComplete}%`,
-          `Goals set: ${group.membersWithGoals}/${group.totalMembers} members`,
-        ]
-      : [];
-    return [`**Leaderboard · ${month}**`, ...groupLine, ...lines].join("\n");
+    const groupSection = group
+      ? `**Group**\n${group.completedKm}/${group.effectiveGoalKm}km · ${group.percentComplete}%\n${renderProgressBar(group.percentComplete)}\nGoals set: ${group.membersWithGoals}/${group.totalMembers} members`
+      : undefined;
+    return [`**Leaderboard · ${month}**`, groupSection, "**Runners**", ...lines].filter(Boolean).join("\n\n");
   }
 
   renderMemberStatus(status: MemberMonthStatus): string {
@@ -73,17 +91,16 @@ export class DiscordPresenter {
   renderPunishments(
     month: string,
     punishments: PunishmentRecord[],
-    assignedByNames: Map<string, string>,
   ): string {
+    const monthName = renderMonthName(month);
     if (punishments.length === 0) {
-      return `**Punishments · ${month}**\nNo punishments recorded.`;
+      return `**Punishments · ${monthName}**\nNo punishments recorded.`;
     }
 
     const lines = punishments.map((punishment, index) => {
-      const assignedByName = assignedByNames.get(punishment.assignedByMemberId) ?? punishment.assignedByMemberId;
-      return `${index + 1}. ${punishment.note} (recorded by ${assignedByName})`;
+      return `  😈 **#${index + 1}** ${punishment.note}`;
     });
-    return [`**Punishments · ${month}**`, ...lines].join("\n");
+    return [`**Punishments · ${monthName}**`, ...lines].join("\n\n");
   }
 
   renderLeaderHelp(month: string, input: { isLeader: boolean; isAdmin: boolean }): string {

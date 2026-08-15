@@ -1175,11 +1175,19 @@ describe("ChallengeService", () => {
     const leaderboardMessage = presenter.renderLeaderboard(fixture.month, monthlySummary.leaderboard);
     const memberStatuses = await fixture.service.getMemberStatuses(fixture.workspace.id, monthlySummary.challenge.id);
     const statusMessage = presenter.renderMemberStatus(memberStatuses.find((status) => status.memberId === fixture.john.id)!);
+    const completedGoalMessage = presenter.renderLeaderboard(fixture.month, [{ ...monthlySummary.leaderboard[0]!, percentComplete: 100 }]);
+    const overflowGoalMessage = presenter.renderLeaderboard(fixture.month, [{ ...monthlySummary.leaderboard[0]!, percentComplete: 120 }]);
+    const doubleOverflowMessage = presenter.renderLeaderboard(fixture.month, [{ ...monthlySummary.leaderboard[0]!, percentComplete: 220 }]);
+    const tripleOverflowMessage = presenter.renderLeaderboard(fixture.month, [{ ...monthlySummary.leaderboard[0]!, percentComplete: 320 }]);
 
-    ok(leaderboardMessage.includes("John 👑: 40/100km"));
-    ok(leaderboardMessage.includes("[👟👟👟👟······]"));
+    ok(leaderboardMessage.includes("**#1 · John 👑**\n40/100km"));
+    ok(leaderboardMessage.includes("40/100km · 40%\n[💨💨💨👟▫️▫️▫️▫️▫️▫️]"));
     ok(statusMessage.includes("40/100km"));
-    ok(statusMessage.includes("[👟👟👟👟······]"));
+    ok(statusMessage.includes("[💨💨💨👟▫️▫️▫️▫️▫️▫️]"));
+    ok(completedGoalMessage.includes("[✅✅✅✅✅✅✅✅✅✅]"));
+    ok(overflowGoalMessage.includes("[😈😈✅✅✅✅✅✅✅✅]"));
+    ok(doubleOverflowMessage.includes("[🐦‍🔥🐦‍🔥😈😈😈😈😈😈😈😈]"));
+    ok(tripleOverflowMessage.includes("[🐐🐐🐦‍🔥🐦‍🔥🐦‍🔥🐦‍🔥🐦‍🔥🐦‍🔥🐦‍🔥🐦‍🔥]"));
     equal(monthlySummary.leaderboard.find((row) => row.memberId === fixture.john.id)?.isLeader, true);
     equal(monthlySummary.leaderboard.find((row) => row.memberId === fixture.sarah.id)?.isLeader, false);
     deepEqual(
@@ -1249,9 +1257,9 @@ describe("ChallengeService", () => {
     ok(profileReply.includes("Profile image updated."));
     equal(updatedMember?.profileImageUrl, "https://cdn.example/avatars/john.png");
     equal(updatedMember?.profileImageSource, "custom_url");
-    ok(boardReply.includes("Group:"));
+    ok(boardReply.includes("**Group**"));
     ok(boardReply.includes("15.5/90km"));
-    ok(boardReply.includes("John 👑: 15.5/90km"));
+    ok(boardReply.includes("**#1 · John 👑**\n15.5/90km"));
   });
 
   it("returns a useful receipt when a proof-backed run is submitted through Discord", async () => {
@@ -1340,8 +1348,9 @@ describe("ChallengeService", () => {
 
     ok(nonLeaderReply.includes("assigned leader or an admin"));
     ok(leaderReply.includes("Group punishment recorded: 100 burpees"));
-    ok(punishmentsReply.includes("1. 100 burpees"));
-    ok(punishmentsReply.includes("recorded by John"));
+    ok(punishmentsReply.includes("**Punishments · April 2026**"));
+    ok(punishmentsReply.includes("\n\n  😈 **#1** 100 burpees"));
+    ok(!punishmentsReply.includes("recorded by John"));
   });
 
   it("lets only the assigned leader remove punishments", async () => {
