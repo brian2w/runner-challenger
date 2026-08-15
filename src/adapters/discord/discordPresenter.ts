@@ -64,7 +64,7 @@ export class DiscordPresenter {
 
     const missedAnyGoal = summary.results.some((result) => !result.noGoalSet && !result.hitGoal);
     const punishmentPrompt = missedAnyGoal
-      ? ["Leader: assign punishments with `/leader-record-punishment member note`."]
+      ? ["Leader: record a group punishment with `/leader-record-punishment note`."]
       : [];
 
     return [`**Month closed · ${summary.month}**`, ...lines, ...punishmentPrompt].join("\n");
@@ -73,7 +73,6 @@ export class DiscordPresenter {
   renderPunishments(
     month: string,
     punishments: PunishmentRecord[],
-    memberNames: Map<string, string>,
     assignedByNames: Map<string, string>,
   ): string {
     if (punishments.length === 0) {
@@ -81,9 +80,8 @@ export class DiscordPresenter {
     }
 
     const lines = punishments.map((punishment, index) => {
-      const memberName = memberNames.get(punishment.memberId) ?? punishment.memberId;
       const assignedByName = assignedByNames.get(punishment.assignedByMemberId) ?? punishment.assignedByMemberId;
-      return `${index + 1}. ${memberName}: ${punishment.note} (assigned by ${assignedByName})`;
+      return `${index + 1}. ${punishment.note} (recorded by ${assignedByName})`;
     });
     return [`**Punishments · ${month}**`, ...lines].join("\n");
   }
@@ -97,9 +95,9 @@ export class DiscordPresenter {
     return [
       `**Leader commands · ${month}**`,
       access,
-      "`/leader-record-punishment member note` - record a punishment as leader or admin.",
-      "`/leader-remove-punishment punishment_id` - remove a recorded punishment as assigned leader.",
-      "`/punishments member` - view recorded punishments.",
+      "`/leader-record-punishment note` - record a group punishment as leader or admin.",
+      "`/leader-remove-punishment punishment_number` - remove a numbered punishment as assigned leader.",
+      "`/punishments` - view recorded group punishments.",
       "`/admin-override-run submission_id action distance_km` - admins can correct or remove run submissions.",
     ].join("\n");
   }

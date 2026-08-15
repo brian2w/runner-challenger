@@ -244,32 +244,20 @@ export class RunnerChallengeDiscordBot {
         const member = await this.ensureMember(workspace, user);
         return { member_id: member.id };
       }
-      case "punishments": {
-        const user = interaction.options.getUser("member");
-        if (!user) {
-          return {};
-        }
-        const member = await this.ensureMember(workspace, user);
-        return { member_id: member.id };
-      }
+      case "punishments":
+        return {};
       case "admin-override-run":
         return {
           submission_id: interaction.options.getString("submission_id", true),
           action: interaction.options.getString("action", true),
           distance_km: interaction.options.getNumber("distance_km") ?? undefined,
         };
-      case "leader-record-punishment": {
-        const user = interaction.options.getUser("member", true);
-        const member = await this.ensureMember(workspace, user);
-        return { member_id: member.id, note: interaction.options.getString("note", true) };
-      }
+      case "leader-record-punishment":
+        return { note: interaction.options.getString("note", true) };
       case "leader-remove-punishment":
-        return { punishment_id: interaction.options.getString("punishment_id", true) };
-      case "admin-record-punishment": {
-        const user = interaction.options.getUser("member", true);
-        const member = await this.ensureMember(workspace, user);
-        return { member_id: member.id, note: interaction.options.getString("note", true) };
-      }
+        return { punishment_number: interaction.options.getInteger("punishment_number", true) };
+      case "admin-record-punishment":
+        return { note: interaction.options.getString("note", true) };
       default:
         return {};
     }
@@ -494,6 +482,7 @@ export class RunnerChallengeDiscordBot {
     const types: Record<SlashCommandOption["type"], ApplicationCommandOptionType> = {
       string: ApplicationCommandOptionType.String,
       number: ApplicationCommandOptionType.Number,
+      integer: ApplicationCommandOptionType.Integer,
       attachment: ApplicationCommandOptionType.Attachment,
       user: ApplicationCommandOptionType.User,
     };

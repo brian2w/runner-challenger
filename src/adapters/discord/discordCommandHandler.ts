@@ -104,17 +104,15 @@ export class DiscordCommandHandler {
           return { content: this.presenter.renderMemberStatus(status) };
         }
         case "punishments": {
-          const memberId = this.optionalString(input.options, "member_id") ?? input.actorMemberId;
           const [punishments, members] = await Promise.all([
             this.service.listPunishments({
               workspaceId: input.workspaceId,
               month: input.month,
-              memberId,
             }),
             this.repository.listMembersByWorkspace(input.workspaceId),
           ]);
           const memberNames = new Map(members.map((member) => [member.id, member.displayName]));
-          return { content: this.presenter.renderPunishments(input.month, punishments, memberNames, memberNames) };
+          return { content: this.presenter.renderPunishments(input.month, punishments, memberNames) };
         }
         case "leader-help": {
           const isLeader = await this.isLeader(input);
@@ -173,34 +171,38 @@ export class DiscordCommandHandler {
           const record = await this.service.recordPunishment({
             workspaceId: input.workspaceId,
             month: input.month,
-            memberId: this.requireString(input.options, "member_id"),
             assignedByMemberId: input.actorMemberId,
             note: this.requireString(input.options, "note"),
           });
-          const member = await this.repository.getMemberById(record.memberId);
-          return { content: `Punishment recorded for ${member?.displayName ?? record.memberId}.` };
+          return { content: `Group punishment recorded: ${record.note}` };
         }
         case "leader-remove-punishment": {
           await this.requireLeader(input);
-          const punishment = await this.service.removePunishment({
+          const punishmentNumber = this.requirePositiveInteger(input.options, "punishment_number");
+          const punishments = await this.service.listPunishments({
             workspaceId: input.workspaceId,
             month: input.month,
-            punishmentId: this.requireString(input.options, "punishment_id"),
           });
-          const member = await this.repository.getMemberById(punishment.memberId);
-          return { content: `Punishment removed for ${member?.displayName ?? punishment.memberId}.` };
+          const punishment = punishments[punishmentNumber - 1];
+          if (!punishment) {
+            throw new DomainError("Punishment number was not found for that month.");
+          }
+          await this.service.removePunishment({
+            workspaceId: input.workspaceId,
+            month: input.month,
+            punishmentId: punishment.id,
+          });
+          return { content: `Group punishment removed: ${punishment.note}` };
         }
         case "admin-record-punishment": {
           await this.requireLeaderOrAdmin(input);
           const record = await this.service.recordPunishment({
             workspaceId: input.workspaceId,
             month: input.month,
-            memberId: this.requireString(input.options, "member_id"),
             assignedByMemberId: input.actorMemberId,
             note: this.requireString(input.options, "note"),
           });
-          const member = await this.repository.getMemberById(record.memberId);
-          return { content: `Punishment recorded for ${member?.displayName ?? record.memberId}.` };
+          return { content: `Group punishment recorded: ${record.note}` };
         }
         default:
           throw new DomainError(`Unknown command: ${input.commandName}`);
@@ -319,6 +321,14 @@ export class DiscordCommandHandler {
     const value = options?.[key];
     if (typeof value !== "number" || !Number.isFinite(value)) {
       throw new DomainError(`Missing required numeric option: ${key}`);
+    }
+    return value;
+  }
+
+  private requirePositiveInteger(options: Record<string, string | number | undefined> | undefined, key: string): number {
+    const value = this.requireNumber(options, key);
+    if (!Number.isInteger(value) || value < 1) {
+      throw new DomainError(`${key} must be a positive whole number.`);
     }
     return value;
   }

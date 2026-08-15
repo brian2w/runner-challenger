@@ -114,7 +114,6 @@ export interface PunishmentRecord {
   id: string;
   workspaceId: string;
   challengeId: string;
-  memberId: string;
   assignedByMemberId: string;
   note: string;
   createdAt: string;
