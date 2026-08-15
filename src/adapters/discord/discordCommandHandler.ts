@@ -304,7 +304,7 @@ export class DiscordCommandHandler {
       : "";
 
     return {
-      content: `Run logged: ${submission.distanceKm}km on ${submission.runDate}${proofLabel}${progress}\nSubmission ID: ${submission.id}`,
+      content: `Run logged: ${submission.distanceKm}km on ${submission.runDate}${proofLabel}${progress}`,
       runSummaryCard: {
         submissionId: submission.id,
         runDate: submission.runDate,
