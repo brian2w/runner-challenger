@@ -19,15 +19,15 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 | `/profile-set image_url` | Set a custom profile image URL for status thumbnails and future richer leaderboard cards. |
 | `/leaderboard` | Show current standings for the active month. |
 | `/status` | Show your current month progress against your goal. |
-| `/punishments [member]` | Show recorded punishments for yourself or another member. |
+| `/punishments` | Show the month's group punishments. |
 | `/leader-help` | Show the commands available to the assigned leader. |
 | `/admin-start-month month` | Create a challenge month for goal setting and run logging. The bot also creates the current month on startup. |
 | `/admin-close-month month` | Close the month and calculate missed-distance carryovers. |
 | `/admin-assign-leader member` | Assign the current month's leader. |
-| `/leader-record-punishment member note` | Record a punishment as the assigned leader or server admin. |
-| `/leader-remove-punishment punishment_id` | Remove a punishment as the assigned leader. |
+| `/leader-record-punishment note` | Record a group punishment as the assigned leader or server admin. |
+| `/leader-remove-punishment punishment_number` | Remove a numbered group punishment as the assigned leader. |
 | `/admin-override-run submission_id action distance_km` | Correct or remove a submitted run. |
-| `/admin-record-punishment member note` | Record a punishment note for a missed month. |
+| `/admin-record-punishment note` | Record a group punishment for a missed month. |
 
 Admin commands require Discord's Manage Server permission.
 The assigned leader can record and remove punishments for the active month. The group goal shown on `/leaderboard` is the sum of members' effective monthly goals.

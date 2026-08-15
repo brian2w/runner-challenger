@@ -1,4 +1,4 @@
-import { deepEqual } from "node:assert/strict";
+import { deepEqual, equal } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { slashCommands } from "../src/adapters/discord/commandCatalog.js";
 
@@ -22,5 +22,8 @@ describe("slashCommands", () => {
       "admin-override-run",
       "admin-record-punishment",
     ]);
+
+    const removePunishment = slashCommands.find((command) => command.name === "leader-remove-punishment");
+    equal(removePunishment?.options?.[0]?.type, "integer");
   });
 });

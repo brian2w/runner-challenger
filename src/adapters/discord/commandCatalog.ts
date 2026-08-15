@@ -1,7 +1,7 @@
 export interface SlashCommandOption {
   name: string;
   description: string;
-  type: "string" | "number" | "attachment" | "user";
+  type: "string" | "number" | "integer" | "attachment" | "user";
   required: boolean;
 }
 
@@ -44,8 +44,7 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "punishments",
-    description: "Show recorded punishments for yourself or another member.",
-    options: [{ name: "member", description: "Discord member to inspect.", type: "user", required: false }],
+    description: "Show the month's group punishments.",
   },
   {
     name: "leader-help",
@@ -71,16 +70,13 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "leader-record-punishment",
-    description: "Record a punishment as the assigned leader or server admin.",
-    options: [
-      { name: "member", description: "Member receiving the punishment.", type: "user", required: true },
-      { name: "note", description: "Punishment note.", type: "string", required: true },
-    ],
+    description: "Record a group punishment as the assigned leader or server admin.",
+    options: [{ name: "note", description: "Punishment for everyone who missed the month.", type: "string", required: true }],
   },
   {
     name: "leader-remove-punishment",
     description: "Remove a punishment as the assigned leader.",
-    options: [{ name: "punishment_id", description: "Punishment id to remove.", type: "string", required: true }],
+    options: [{ name: "punishment_number", description: "Number shown by /punishments.", type: "integer", required: true }],
   },
   {
     name: "admin-override-run",
@@ -94,11 +90,8 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "admin-record-punishment",
-    description: "Record a punishment note for a missed month.",
+    description: "Record a group punishment for a missed month.",
     adminOnly: true,
-    options: [
-      { name: "member", description: "Member receiving the punishment.", type: "user", required: true },
-      { name: "note", description: "Punishment note.", type: "string", required: true },
-    ],
+    options: [{ name: "note", description: "Punishment for everyone who missed the month.", type: "string", required: true }],
   },
 ];

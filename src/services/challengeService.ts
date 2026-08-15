@@ -276,19 +276,16 @@ export class ChallengeService {
   async recordPunishment(input: {
     workspaceId: string;
     month: MonthKey;
-    memberId: string;
     assignedByMemberId: string;
     note: string;
   }): Promise<PunishmentRecord> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    await this.requireParticipantMember(input.memberId, input.workspaceId);
     await this.requireParticipantMember(input.assignedByMemberId, input.workspaceId);
 
     const record: PunishmentRecord = {
       id: randomUUID(),
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
-      memberId: input.memberId,
       assignedByMemberId: input.assignedByMemberId,
       note: input.note,
       createdAt: nowIso(),
@@ -300,16 +297,10 @@ export class ChallengeService {
   async listPunishments(input: {
     workspaceId: string;
     month: MonthKey;
-    memberId?: string;
   }): Promise<PunishmentRecord[]> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    if (input.memberId) {
-      await this.requireMember(input.memberId, input.workspaceId);
-    }
-
     const punishments = await this.repository.listPunishmentsByChallenge(challenge.id);
     return punishments
-      .filter((punishment) => !input.memberId || punishment.memberId === input.memberId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 

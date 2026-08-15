@@ -1309,7 +1309,7 @@ describe("ChallengeService", () => {
     equal(summary.submissions.length, 0);
   });
 
-  it("lets the assigned leader record punishments and members view them", async () => {
+  it("lets the assigned leader record group punishments that every member can view", async () => {
     const fixture = await createFixture();
     const handler = new DiscordCommandHandler(fixture.service, fixture.repository);
 
@@ -1319,7 +1319,6 @@ describe("ChallengeService", () => {
       actorMemberId: fixture.sarah.id,
       commandName: "leader-record-punishment",
       options: {
-        member_id: fixture.mike.id,
         note: "100 burpees",
       },
     });
@@ -1329,21 +1328,20 @@ describe("ChallengeService", () => {
       actorMemberId: fixture.john.id,
       commandName: "leader-record-punishment",
       options: {
-        member_id: fixture.mike.id,
         note: "100 burpees",
       },
     });
-    const selfPunishmentsReply = await handler.handle({
+    const punishmentsReply = await handler.handle({
       workspaceId: fixture.workspace.id,
       month: fixture.month,
-      actorMemberId: fixture.mike.id,
+      actorMemberId: fixture.sarah.id,
       commandName: "punishments",
     });
 
     ok(nonLeaderReply.includes("assigned leader or an admin"));
-    ok(leaderReply.includes("Punishment recorded for Mike"));
-    ok(selfPunishmentsReply.includes("Mike: 100 burpees"));
-    ok(selfPunishmentsReply.includes("assigned by John"));
+    ok(leaderReply.includes("Group punishment recorded: 100 burpees"));
+    ok(punishmentsReply.includes("1. 100 burpees"));
+    ok(punishmentsReply.includes("recorded by John"));
   });
 
   it("lets only the assigned leader remove punishments", async () => {
@@ -1352,7 +1350,6 @@ describe("ChallengeService", () => {
     const punishment = await fixture.service.recordPunishment({
       workspaceId: fixture.workspace.id,
       month: fixture.month,
-      memberId: fixture.mike.id,
       assignedByMemberId: fixture.john.id,
       note: "100 burpees",
     });
@@ -1363,7 +1360,7 @@ describe("ChallengeService", () => {
       actorMemberId: fixture.sarah.id,
       commandName: "leader-remove-punishment",
       options: {
-        punishment_id: punishment.id,
+        punishment_number: 1,
       },
     });
     const adminNotLeaderReply = await handler.handle({
@@ -1373,7 +1370,7 @@ describe("ChallengeService", () => {
       isAdmin: true,
       commandName: "leader-remove-punishment",
       options: {
-        punishment_id: punishment.id,
+        punishment_number: 1,
       },
     });
     const leaderReply = await handler.handle({
@@ -1382,7 +1379,7 @@ describe("ChallengeService", () => {
       actorMemberId: fixture.john.id,
       commandName: "leader-remove-punishment",
       options: {
-        punishment_id: punishment.id,
+        punishment_number: 1,
       },
     });
     const punishmentsReply = await handler.handle({
@@ -1394,7 +1391,7 @@ describe("ChallengeService", () => {
 
     equal(nonLeaderReply, "Error: This command requires the assigned leader.");
     equal(adminNotLeaderReply, "Error: This command requires the assigned leader.");
-    ok(leaderReply.includes("Punishment removed for Mike"));
+    ok(leaderReply.includes("Group punishment removed: 100 burpees"));
     ok(punishmentsReply.includes("No punishments recorded."));
   });
 
@@ -1451,7 +1448,7 @@ describe("ChallengeService", () => {
     });
 
     ok(closeReply.includes("Sarah: missed by 40km"));
-    ok(closeReply.includes("/leader-record-punishment member note"));
+    ok(closeReply.includes("/leader-record-punishment note"));
   });
 
   it("keeps member registration idempotent for the same Discord user", async () => {
