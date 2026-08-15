@@ -104,15 +104,11 @@ export class DiscordCommandHandler {
           return { content: this.presenter.renderMemberStatus(status) };
         }
         case "punishments": {
-          const [punishments, members] = await Promise.all([
-            this.service.listPunishments({
-              workspaceId: input.workspaceId,
-              month: input.month,
-            }),
-            this.repository.listMembersByWorkspace(input.workspaceId),
-          ]);
-          const memberNames = new Map(members.map((member) => [member.id, member.displayName]));
-          return { content: this.presenter.renderPunishments(input.month, punishments, memberNames) };
+          const punishments = await this.service.listPunishments({
+            workspaceId: input.workspaceId,
+            month: input.month,
+          });
+          return { content: this.presenter.renderPunishments(input.month, punishments) };
         }
         case "leader-help": {
           const isLeader = await this.isLeader(input);
