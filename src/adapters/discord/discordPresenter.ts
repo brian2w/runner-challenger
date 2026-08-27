@@ -4,7 +4,7 @@ import type {
   MemberMonthStatus,
   MonthCloseSummary,
   PunishmentRecord,
-  ScheduledPrompt,
+  NotificationIntent,
 } from "../../core/types.js";
 
 function renderProgressBar(percent: number): string {
@@ -119,7 +119,7 @@ export class DiscordPresenter {
     ].join("\n");
   }
 
-  renderPrompt(prompt: ScheduledPrompt, month: string): string {
+  renderPrompt(prompt: NotificationIntent, month: string): string {
     if (prompt.kind === "month_start") {
       return this.renderMonthStartPrompt(month);
     }

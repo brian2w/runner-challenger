@@ -4,33 +4,23 @@ export type ChallengeKind = "monthly_distance_km";
 export type ChallengeStatus = "open" | "closed";
 export type EvidenceSourceType = "proof_attachment";
 export type SubmissionStatus = "accepted" | "corrected" | "removed";
-export type ProfileImageSource = "discord_avatar" | "custom_url";
+export type ProfileImageSource = "platform_avatar" | "custom_url";
 export type PromptKind =
   | "month_start"
   | "weekly_reminder"
   | "leaderboard_update"
   | "month_close";
 
-export interface DiscordWorkspace {
+export interface Workspace {
   id: string;
   name: string;
-  discordGuildId: string;
   timezone: string;
-  channelRefs: {
-    rules: string;
-    announcements: string;
-    progressLog: string;
-    leaderboard: string;
-    chat: string;
-    combined: string;
-  };
   createdAt: string;
 }
 
 export interface Member {
   id: string;
   workspaceId: string;
-  discordUserId: string;
   displayName: string;
   profileImageUrl?: string;
   profileImageSource?: ProfileImageSource;
@@ -119,14 +109,16 @@ export interface PunishmentRecord {
   createdAt: string;
 }
 
-export interface ScheduledPrompt {
+export type NotificationAudience = "workspace" | "leader";
+
+export interface NotificationIntent {
   id: string;
   workspaceId: string;
   challengeId: string;
   month: MonthKey;
   kind: PromptKind;
   scheduledFor: string;
-  channelKey: keyof DiscordWorkspace["channelRefs"];
+  audience: NotificationAudience;
   deliveredAt?: string;
 }
 

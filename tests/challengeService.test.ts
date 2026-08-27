@@ -1,18 +1,20 @@
 import { deepEqual, equal, ok, rejects, throws } from "node:assert/strict";
+import { readFile, writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { DiscordCommandHandler } from "../src/adapters/discord/discordCommandHandler.js";
 import { DiscordPresenter } from "../src/adapters/discord/discordPresenter.js";
+import { memberIdentityId } from "../src/core/identityIds.js";
 import { createMonthKey, createMonthKeyForDate } from "../src/core/time.js";
 import { InMemoryChallengeRepository } from "../src/repositories/inMemoryChallengeRepository.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
 import { ChallengeService } from "../src/services/challengeService.js";
 
-class FailsPromptPersistenceOnceRepository extends InMemoryChallengeRepository {
+class FailsNotificationPersistenceOnceRepository extends InMemoryChallengeRepository {
   private promptWrites = 0;
   private hasFailed = false;
 
-  override async saveScheduledPrompt(
-    prompt: Parameters<InMemoryChallengeRepository["saveScheduledPrompt"]>[0],
+  override async saveNotificationIntent(
+    intent: Parameters<InMemoryChallengeRepository["saveNotificationIntent"]>[0],
   ): Promise<void> {
     this.promptWrites += 1;
     if (!this.hasFailed && this.promptWrites === 4) {
@@ -20,23 +22,51 @@ class FailsPromptPersistenceOnceRepository extends InMemoryChallengeRepository {
       throw new Error("simulated prompt persistence failure");
     }
 
-    await super.saveScheduledPrompt(prompt);
+    await super.saveNotificationIntent(intent);
   }
 }
 
-class FailsAfterFinalPromptMutationRepository extends InMemoryChallengeRepository {
+class FailsAfterFinalNotificationMutationRepository extends InMemoryChallengeRepository {
   promptWrites = 0;
   private hasFailed = false;
 
-  override async saveScheduledPrompt(
-    prompt: Parameters<InMemoryChallengeRepository["saveScheduledPrompt"]>[0],
+  override async saveNotificationIntent(
+    intent: Parameters<InMemoryChallengeRepository["saveNotificationIntent"]>[0],
   ): Promise<void> {
     this.promptWrites += 1;
-    await super.saveScheduledPrompt(prompt);
+    await super.saveNotificationIntent(intent);
     if (!this.hasFailed && this.promptWrites === 9) {
       this.hasFailed = true;
       throw new Error("simulated post-mutation prompt persistence failure");
     }
+  }
+}
+
+class FailsFirstMemberIdentitySaveRepository extends InMemoryChallengeRepository {
+  private hasFailed = false;
+
+  override async saveMemberIdentity(
+    identity: Parameters<InMemoryChallengeRepository["saveMemberIdentity"]>[0],
+  ): Promise<void> {
+    if (!this.hasFailed) {
+      this.hasFailed = true;
+      throw new Error("simulated member identity persistence failure");
+    }
+    await super.saveMemberIdentity(identity);
+  }
+}
+
+class FailsFirstWorkspaceIntegrationSaveRepository extends InMemoryChallengeRepository {
+  private hasFailed = false;
+
+  override async saveWorkspaceIntegration(
+    integration: Parameters<InMemoryChallengeRepository["saveWorkspaceIntegration"]>[0],
+  ): Promise<void> {
+    if (!this.hasFailed) {
+      this.hasFailed = true;
+      throw new Error("simulated workspace integration persistence failure");
+    }
+    await super.saveWorkspaceIntegration(integration);
   }
 }
 
@@ -105,17 +135,20 @@ async function createFixture() {
 
   const john = await service.registerMember({
     workspaceId: workspace.id,
-    discordUserId: "discord-john",
+    platform: "discord",
+    externalUserId: "discord-john",
     displayName: "John",
   });
   const sarah = await service.registerMember({
     workspaceId: workspace.id,
-    discordUserId: "discord-sarah",
+    platform: "discord",
+    externalUserId: "discord-sarah",
     displayName: "Sarah",
   });
   const mike = await service.registerMember({
     workspaceId: workspace.id,
-    discordUserId: "discord-mike",
+    platform: "discord",
+    externalUserId: "discord-mike",
     displayName: "Mike",
   });
 
@@ -396,15 +429,15 @@ describe("ChallengeService", () => {
       month: fixture.month,
     });
 
-    equal(summary.prompts.length, 9);
-    ok(summary.prompts.every((prompt) => prompt.month === fixture.month));
-    ok(summary.prompts.every((prompt) => prompt.challengeId === summary.challenge.id));
-    equal(summary.prompts.at(-1)?.kind, "month_close");
+    equal(summary.notificationIntents.length, 9);
+    ok(summary.notificationIntents.every((intent) => intent.month === fixture.month));
+    ok(summary.notificationIntents.every((intent) => intent.challengeId === summary.challenge.id));
+    equal(summary.notificationIntents.at(-1)?.kind, "month_close");
   });
 
   it("repairs missing scheduled prompts when start month is retried after a partial failure", async () => {
     const month = createMonthKey(2026, 4);
-    const repository = new FailsPromptPersistenceOnceRepository();
+    const repository = new FailsNotificationPersistenceOnceRepository();
     const service = new ChallengeService(repository);
     const workspace = await service.createWorkspace({
       name: "Run Club",
@@ -429,13 +462,13 @@ describe("ChallengeService", () => {
     const prompts = await repository.listScheduledPromptsByChallenge(challenge.id);
 
     equal(prompts.length, 9);
-    const promptKeys = prompts.map((prompt) => `${prompt.kind}:${prompt.scheduledFor}:${prompt.channelKey}`);
+    const promptKeys = prompts.map((prompt) => `${prompt.kind}:${prompt.scheduledFor}:${prompt.audience}`);
     equal(new Set(promptKeys).size, 9);
   });
 
   it("re-persists deterministic scheduled prompts after a post-mutation prompt failure", async () => {
     const month = createMonthKey(2026, 4);
-    const repository = new FailsAfterFinalPromptMutationRepository();
+    const repository = new FailsAfterFinalNotificationMutationRepository();
     const service = new ChallengeService(repository);
     const workspace = await service.createWorkspace({
       name: "Run Club",
@@ -470,7 +503,7 @@ describe("ChallengeService", () => {
       month: fixture.month,
     });
     const deliveredPrompt = {
-      ...summary.prompts[0]!,
+      ...summary.notificationIntents[0]!,
       deliveredAt: "2026-04-01T12:00:00.000Z",
     };
     await fixture.repository.saveScheduledPrompt(deliveredPrompt);
@@ -1465,14 +1498,137 @@ describe("ChallengeService", () => {
 
     const updated = await fixture.service.registerMember({
       workspaceId: fixture.workspace.id,
-      discordUserId: fixture.john.discordUserId,
+      platform: "discord",
+      externalUserId: "discord-john",
       displayName: "Johnny",
     });
     const members = await fixture.repository.listMembersByWorkspace(fixture.workspace.id);
 
     equal(updated.id, fixture.john.id);
-    equal(members.filter((member) => member.discordUserId === fixture.john.discordUserId).length, 1);
+    equal((await fixture.repository.listMemberIdentities(fixture.john.id)).length, 1);
     equal(updated.displayName, "Johnny");
+  });
+
+  it("rejects member registration without a platform identity", async () => {
+    const fixture = await createFixture();
+
+    await rejects(
+      () => fixture.service.registerMember({
+        workspaceId: fixture.workspace.id,
+        displayName: "Unlinked Runner",
+      }),
+      /requires a platform identity/,
+    );
+  });
+
+  it("links multiple platform identities to one member without changing challenge membership", async () => {
+    const fixture = await createFixture();
+
+    await fixture.service.linkMemberIdentity({
+      workspaceId: fixture.workspace.id,
+      memberId: fixture.john.id,
+      platform: "whatsapp",
+      externalUserId: "+61400000000",
+    });
+    await fixture.service.linkMemberIdentity({
+      workspaceId: fixture.workspace.id,
+      memberId: fixture.john.id,
+      platform: "messenger",
+      externalUserId: "messenger-john",
+    });
+
+    const identities = await fixture.repository.listMemberIdentities(fixture.john.id);
+    equal(identities.length, 3);
+    equal((await fixture.repository.listMembersByWorkspace(fixture.workspace.id)).length, 3);
+    await rejects(
+      () => fixture.service.linkMemberIdentity({
+        workspaceId: fixture.workspace.id,
+        memberId: fixture.sarah.id,
+        platform: "whatsapp",
+        externalUserId: "+61400000000",
+      }),
+      /already linked/,
+    );
+  });
+
+  it("keeps concurrent first registrations for one platform identity idempotent", async () => {
+    const fixture = await createFixture();
+
+    const registrations = await Promise.all([
+      fixture.service.registerMember({
+        workspaceId: fixture.workspace.id,
+        platform: "whatsapp",
+        externalUserId: "+61400000001",
+        displayName: "New Runner",
+      }),
+      fixture.service.registerMember({
+        workspaceId: fixture.workspace.id,
+        platform: "whatsapp",
+        externalUserId: "+61400000001",
+        displayName: "New Runner",
+      }),
+    ]);
+
+    equal(registrations[0]?.id, registrations[1]?.id);
+    equal((await fixture.repository.listMemberIdentities(registrations[0]!.id)).length, 1);
+  });
+
+  it("keeps concurrent platform workspace resolution idempotent", async () => {
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+
+    const workspaces = await Promise.all([
+      service.getOrCreateWorkspaceForIntegration({
+        name: "Run Club",
+        timezone: "Australia/Sydney",
+        platform: "messenger",
+        externalWorkspaceId: "thread-1",
+      }),
+      service.getOrCreateWorkspaceForIntegration({
+        name: "Run Club",
+        timezone: "Australia/Sydney",
+        platform: "messenger",
+        externalWorkspaceId: "thread-1",
+      }),
+    ]);
+
+    equal(workspaces[0]?.id, workspaces[1]?.id);
+    equal((await repository.listWorkspaces()).length, 1);
+  });
+
+  it("reconciles a member retry after identity persistence fails", async () => {
+    const repository = new FailsFirstMemberIdentitySaveRepository();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({ name: "Run Club", timezone: "Australia/Sydney" });
+    const input = {
+      workspaceId: workspace.id,
+      platform: "whatsapp",
+      externalUserId: "+61400000002",
+      displayName: "Retry Runner",
+    };
+
+    await rejects(() => service.registerMember(input), /identity persistence failure/);
+    const member = await service.registerMember(input);
+
+    equal((await repository.listMembersByWorkspace(workspace.id)).length, 1);
+    equal((await repository.getMemberIdentity(workspace.id, "whatsapp", input.externalUserId))?.memberId, member.id);
+  });
+
+  it("reconciles a workspace retry after integration persistence fails", async () => {
+    const repository = new FailsFirstWorkspaceIntegrationSaveRepository();
+    const service = new ChallengeService(repository);
+    const input = {
+      name: "Run Club",
+      timezone: "Australia/Sydney",
+      platform: "messenger",
+      externalWorkspaceId: "thread-2",
+    };
+
+    await rejects(() => service.getOrCreateWorkspaceForIntegration(input), /integration persistence failure/);
+    const workspace = await service.getOrCreateWorkspaceForIntegration(input);
+
+    equal((await repository.listWorkspaces()).length, 1);
+    equal((await service.getWorkspaceByIntegration("messenger", "thread-2"))?.id, workspace.id);
   });
 
   it("rejects invalid command month, non-finite goal distance, out-of-month runs, and invalid profile images", async () => {
@@ -1541,6 +1697,22 @@ describe("ChallengeService", () => {
     equal(createMonthKeyForDate(instant, "America/Los_Angeles"), "2026-04");
   });
 
+  it("keeps the public Momentum surface free of Discord dependencies", async () => {
+    const files = [
+      "src/momentum/index.ts",
+      "src/core/types.ts",
+      "src/core/runtime.ts",
+      "src/services/challengeService.ts",
+      "src/repositories/challengeRepository.ts",
+    ];
+    const source = await Promise.all(files.map((file) => readFile(file, "utf8")));
+
+    for (const content of source) {
+      ok(!content.includes("discord.js"));
+      ok(!content.includes("adapters/discord"));
+    }
+  });
+
   it("rejects month keys outside canonical YYYY-MM bounds", () => {
     throws(() => createMonthKey(999, 1), /YYYY-MM/);
     throws(() => createMonthKey(10000, 1), /YYYY-MM/);
@@ -1580,6 +1752,73 @@ describe("ChallengeService", () => {
 
     equal(leaderboard[0]?.displayName, "Persisted Runner");
     equal(leaderboard[0]?.effectiveGoalKm, 42);
+  });
+
+  it("migrates legacy Discord snapshots into generic integrations and identities", async () => {
+    const filePath = `.tmp/test-legacy-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
+    await writeFile(filePath, JSON.stringify({
+      workspaces: [{
+        id: "workspace-1",
+        name: "Legacy Club",
+        discordGuildId: "guild-1",
+        timezone: "Australia/Sydney",
+        channelRefs: { announcements: "announcements" },
+        createdAt: "2026-04-01T00:00:00.000Z",
+      }],
+      members: [{
+        id: "member-1",
+        workspaceId: "workspace-1",
+        discordUserId: "discord-john",
+        displayName: "John",
+        profileImageSource: "discord_avatar",
+        createdAt: "2026-04-01T00:00:00.000Z",
+      }],
+      prompts: [{
+        id: "prompt-1",
+        workspaceId: "workspace-1",
+        challengeId: "challenge-1",
+        month: "2026-04",
+        kind: "month_start",
+        scheduledFor: "2026-04-01T00:00:00.000Z",
+        channelKey: "announcements",
+      }],
+    }));
+
+    const repository = new JsonFileChallengeRepository(filePath);
+    await repository.init();
+    const service = new ChallengeService(repository);
+    const workspace = await service.getWorkspaceByIntegration("discord", "guild-1");
+    const identity = await repository.getMemberIdentity("workspace-1", "discord", "discord-john");
+    const persisted = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+
+    equal(workspace?.id, "workspace-1");
+    equal(identity?.memberId, "member-1");
+    equal(identity?.id, memberIdentityId("workspace-1", "discord", "discord-john"));
+    equal((await repository.listNotificationIntentsByChallenge("challenge-1"))[0]?.audience, "workspace");
+    ok(Array.isArray(persisted.workspaceIntegrations));
+    ok(Array.isArray(persisted.memberIdentities));
+    ok(Array.isArray(persisted.notificationIntents));
+    equal((persisted.workspaces as Array<Record<string, unknown>>)[0]?.discordGuildId, undefined);
+  });
+
+  it("migrates the same legacy Discord user in separate workspaces", async () => {
+    const filePath = `.tmp/test-legacy-multi-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
+    await writeFile(filePath, JSON.stringify({
+      workspaces: [
+        { id: "workspace-1", name: "One", discordGuildId: "guild-1", timezone: "UTC", createdAt: "2026-04-01T00:00:00.000Z" },
+        { id: "workspace-2", name: "Two", discordGuildId: "guild-2", timezone: "UTC", createdAt: "2026-04-01T00:00:00.000Z" },
+      ],
+      members: [
+        { id: "member-1", workspaceId: "workspace-1", discordUserId: "discord-john", displayName: "John", createdAt: "2026-04-01T00:00:00.000Z" },
+        { id: "member-2", workspaceId: "workspace-2", discordUserId: "discord-john", displayName: "John", createdAt: "2026-04-01T00:00:00.000Z" },
+      ],
+    }));
+
+    const repository = new JsonFileChallengeRepository(filePath);
+    await repository.init();
+
+    equal((await repository.getMemberIdentity("workspace-1", "discord", "discord-john"))?.memberId, "member-1");
+    equal((await repository.getMemberIdentity("workspace-2", "discord", "discord-john"))?.memberId, "member-2");
   });
 
 });

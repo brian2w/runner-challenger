@@ -1,6 +1,5 @@
 import type {
   CarryoverPenalty,
-  DiscordWorkspace,
   LeaderAssignment,
   Member,
   MonthlyChallenge,
@@ -8,13 +7,17 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
-  ScheduledPrompt,
+  NotificationIntent,
+  Workspace,
 } from "../core/types.js";
+import type { MemberIdentity, WorkspaceIntegration } from "../application/platformIdentityRepository.js";
 import type { ChallengeRepository } from "./challengeRepository.js";
 
 export class InMemoryChallengeRepository implements ChallengeRepository {
-  protected readonly workspaces = new Map<string, DiscordWorkspace>();
+  protected readonly workspaces = new Map<string, Workspace>();
+  protected readonly workspaceIntegrations = new Map<string, WorkspaceIntegration>();
   protected readonly members = new Map<string, Member>();
+  protected readonly memberIdentities = new Map<string, MemberIdentity>();
   protected readonly challenges = new Map<string, MonthlyChallenge>();
   protected readonly leaderAssignments = new Map<string, LeaderAssignment>();
   protected readonly goals = new Map<string, MonthlyGoal>();
@@ -22,21 +25,17 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
   protected readonly carryovers = new Map<string, CarryoverPenalty>();
   protected readonly results = new Map<string, MonthlyResult>();
   protected readonly punishments = new Map<string, PunishmentRecord>();
-  protected readonly prompts = new Map<string, ScheduledPrompt>();
+  protected readonly notificationIntents = new Map<string, NotificationIntent>();
 
-  async saveWorkspace(workspace: DiscordWorkspace): Promise<void> {
+  async saveWorkspace(workspace: Workspace): Promise<void> {
     this.workspaces.set(workspace.id, workspace);
   }
 
-  async getWorkspaceById(workspaceId: string): Promise<DiscordWorkspace | undefined> {
+  async getWorkspaceById(workspaceId: string): Promise<Workspace | undefined> {
     return this.workspaces.get(workspaceId);
   }
 
-  async getWorkspaceByGuildId(discordGuildId: string): Promise<DiscordWorkspace | undefined> {
-    return [...this.workspaces.values()].find((workspace) => workspace.discordGuildId === discordGuildId);
-  }
-
-  async listWorkspaces(): Promise<DiscordWorkspace[]> {
+  async listWorkspaces(): Promise<Workspace[]> {
     return [...this.workspaces.values()];
   }
 
@@ -46,12 +45,6 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
 
   async getMemberById(memberId: string): Promise<Member | undefined> {
     return this.members.get(memberId);
-  }
-
-  async getMemberByDiscordUserId(workspaceId: string, discordUserId: string): Promise<Member | undefined> {
-    return [...this.members.values()].find(
-      (member) => member.workspaceId === workspaceId && member.discordUserId === discordUserId,
-    );
   }
 
   async listMembersByWorkspace(workspaceId: string): Promise<Member[]> {
@@ -141,13 +134,52 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
     return [...this.punishments.values()].filter((record) => record.challengeId === challengeId);
   }
 
-  async saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void> {
-    this.prompts.set(prompt.id, prompt);
+  async saveWorkspaceIntegration(integration: WorkspaceIntegration): Promise<void> {
+    this.workspaceIntegrations.set(integration.id, integration);
   }
 
-  async listScheduledPromptsByChallenge(challengeId: string): Promise<ScheduledPrompt[]> {
-    return [...this.prompts.values()]
-      .filter((prompt) => prompt.challengeId === challengeId)
+  async getWorkspaceIntegration(platform: string, externalWorkspaceId: string): Promise<WorkspaceIntegration | undefined> {
+    return [...this.workspaceIntegrations.values()].find(
+      (integration) => integration.platform === platform && integration.externalWorkspaceId === externalWorkspaceId,
+    );
+  }
+
+  async saveMemberIdentity(identity: MemberIdentity): Promise<void> {
+    this.memberIdentities.set(identity.id, identity);
+  }
+
+  async getMemberIdentity(
+    workspaceId: string,
+    platform: string,
+    externalUserId: string,
+  ): Promise<MemberIdentity | undefined> {
+    return [...this.memberIdentities.values()].find(
+      (identity) =>
+        identity.workspaceId === workspaceId &&
+        identity.platform === platform &&
+        identity.externalUserId === externalUserId,
+    );
+  }
+
+  async listMemberIdentities(memberId: string): Promise<MemberIdentity[]> {
+    return [...this.memberIdentities.values()].filter((identity) => identity.memberId === memberId);
+  }
+
+  async saveNotificationIntent(intent: NotificationIntent): Promise<void> {
+    this.notificationIntents.set(intent.id, intent);
+  }
+
+  async listNotificationIntentsByChallenge(challengeId: string): Promise<NotificationIntent[]> {
+    return [...this.notificationIntents.values()]
+      .filter((intent) => intent.challengeId === challengeId)
       .sort((left, right) => left.scheduledFor.localeCompare(right.scheduledFor));
+  }
+
+  async saveScheduledPrompt(intent: NotificationIntent): Promise<void> {
+    await this.saveNotificationIntent(intent);
+  }
+
+  async listScheduledPromptsByChallenge(challengeId: string): Promise<NotificationIntent[]> {
+    return this.listNotificationIntentsByChallenge(challengeId);
   }
 }

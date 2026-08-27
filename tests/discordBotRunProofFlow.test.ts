@@ -46,14 +46,6 @@ function config(): DiscordBotConfig {
     guildId: "guild-1",
     workspaceName: "Run Club",
     timezone: "Australia/Sydney",
-    channelRefs: {
-      rules: "rules",
-      announcements: "announcements",
-      progressLog: "progress-log",
-      leaderboard: "leaderboard",
-      chat: "chat",
-      combined: "combined",
-    },
   };
 }
 
@@ -199,11 +191,12 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     match(confirmation?.content ?? "", /Distance: 13\.78km/);
     match(confirmation?.content ?? "", /Date: 2026-07-05/);
 
-    const workspace = await repository.getWorkspaceByGuildId("guild-1");
+    const workspace = await service.getWorkspaceByIntegration("discord", "guild-1");
     ok(workspace);
-    const member = await repository.getMemberByDiscordUserId(workspace.id, runner.id);
+    const identity = await repository.getMemberIdentity(workspace.id, "discord", runner.id);
+    const member = identity ? await repository.getMemberById(identity.memberId) : undefined;
     equal(member?.profileImageUrl, "https://cdn.example/avatars/runner.png");
-    equal(member?.profileImageSource, "discord_avatar");
+    equal(member?.profileImageSource, "platform_avatar");
     const challenge = await repository.getChallengeByMonth(workspace.id, "2026-07");
     ok(challenge);
     equal((await repository.listSubmissionsByChallenge(challenge.id)).length, 0);
