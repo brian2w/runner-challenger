@@ -16,7 +16,7 @@ import {
 } from "discord.js";
 import { DomainError } from "../../core/errors.js";
 import { createMonthKeyForDate } from "../../core/time.js";
-import type { DiscordWorkspace, Member, MonthKey } from "../../core/types.js";
+import type { Member, MonthKey, Workspace } from "../../core/types.js";
 import { renderRunSummaryCard } from "../../cards/runSummaryCard.js";
 import type { OcrProvider } from "../../ocr/ocrProvider.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
@@ -33,7 +33,6 @@ export interface DiscordBotConfig {
   guildId: string;
   workspaceName: string;
   timezone: string;
-  channelRefs: DiscordWorkspace["channelRefs"];
 }
 
 export class RunnerChallengeDiscordBot {
@@ -74,16 +73,13 @@ export class RunnerChallengeDiscordBot {
     await this.client.login(this.config.token);
   }
 
-  async bootstrapWorkspace(): Promise<DiscordWorkspace> {
-    const existing = await this.repository.getWorkspaceByGuildId(this.config.guildId);
-    const workspace =
-      existing ??
-      (await this.service.createWorkspace({
-        name: this.config.workspaceName,
-        discordGuildId: this.config.guildId,
-        timezone: this.config.timezone,
-        channelRefs: this.config.channelRefs,
-      }));
+  async bootstrapWorkspace(): Promise<Workspace> {
+    const workspace = await this.service.getOrCreateWorkspaceForIntegration({
+      name: this.config.workspaceName,
+      timezone: this.config.timezone,
+      platform: "discord",
+      externalWorkspaceId: this.config.guildId,
+    });
 
     await this.service.startMonth({
       workspaceId: workspace.id,
@@ -91,7 +87,8 @@ export class RunnerChallengeDiscordBot {
     });
     await this.service.registerMember({
       workspaceId: workspace.id,
-      discordUserId: this.config.clientId,
+      platform: "discord",
+      externalUserId: this.config.clientId,
       displayName: this.config.workspaceName,
       isBot: true,
     });
@@ -226,7 +223,7 @@ export class RunnerChallengeDiscordBot {
 
   private async commandOptions(
     interaction: ChatInputCommandInteraction,
-    workspace: DiscordWorkspace,
+    workspace: Workspace,
     month: MonthKey,
   ): Promise<Record<string, string | number | undefined>> {
     switch (interaction.commandName) {
@@ -300,7 +297,7 @@ export class RunnerChallengeDiscordBot {
 
   private async replyWithRunProofConfirmation(
     interaction: ChatInputCommandInteraction,
-    workspace: DiscordWorkspace,
+    workspace: Workspace,
     actor: Member,
     month: MonthKey,
     options: Record<string, string | number | undefined>,
@@ -382,38 +379,20 @@ export class RunnerChallengeDiscordBot {
     });
   }
 
-  private async ensureMember(workspace: DiscordWorkspace, user: User): Promise<Member> {
+  private async ensureMember(workspace: Workspace, user: User): Promise<Member> {
     if (user.bot || user.id === this.config.clientId) {
       throw new DomainError("Bot accounts cannot participate in challenges.");
     }
-    const discordUserId = user.id;
+    const externalUserId = user.id;
     const displayName = user.globalName ?? user.username;
     const discordAvatarUrl = this.discordAvatarUrl(user);
-    const existing = await this.repository.getMemberByDiscordUserId(workspace.id, discordUserId);
-    if (existing) {
-      const shouldRefreshAvatar =
-        Boolean(discordAvatarUrl) &&
-        existing.profileImageSource !== "custom_url" &&
-        existing.profileImageUrl !== discordAvatarUrl;
-      if (existing.displayName !== displayName || shouldRefreshAvatar) {
-        const updated = {
-          ...existing,
-          displayName,
-          profileImageUrl: shouldRefreshAvatar ? discordAvatarUrl : existing.profileImageUrl,
-          profileImageSource: shouldRefreshAvatar ? "discord_avatar" as const : existing.profileImageSource,
-        };
-        await this.repository.saveMember(updated);
-        return updated;
-      }
-      return existing;
-    }
-
     return this.service.registerMember({
       workspaceId: workspace.id,
-      discordUserId,
+      platform: "discord",
+      externalUserId,
       displayName,
       profileImageUrl: discordAvatarUrl,
-      profileImageSource: discordAvatarUrl ? "discord_avatar" : undefined,
+      profileImageSource: discordAvatarUrl ? "platform_avatar" : undefined,
     });
   }
 

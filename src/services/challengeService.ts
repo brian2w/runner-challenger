@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   buildGroupProgressSummary,
   buildLeaderboardRows,
@@ -7,10 +6,12 @@ import {
   computeEffectiveGoal,
 } from "../core/calculations.js";
 import { DomainError } from "../core/errors.js";
-import { addDays, isIsoDate, isIsoDateInMonth, monthCloseIso, monthStartIso, nextMonth, nowIso } from "../core/time.js";
+import { addDays, isIsoDate, isIsoDateInMonth, monthCloseIso, monthStartIso, nextMonth } from "../core/time.js";
+import { systemMomentumRuntime, type MomentumRuntime } from "../core/runtime.js";
 import type {
   CarryoverPenalty,
-  DiscordWorkspace,
+  NotificationAudience,
+  NotificationIntent,
   GroupProgressSummary,
   LeaderAssignment,
   LeaderboardRow,
@@ -23,45 +24,96 @@ import type {
   PromptKind,
   PunishmentRecord,
   RunSubmission,
-  ScheduledPrompt,
+  Workspace,
 } from "../core/types.js";
 import type { ChallengeRepository } from "../repositories/challengeRepository.js";
 
-export class ChallengeService {
-  constructor(private readonly repository: ChallengeRepository) {}
+type RegisterMemberInput = {
+  workspaceId: string;
+  displayName: string;
+  profileImageUrl?: string;
+  profileImageSource?: Member["profileImageSource"];
+  isBot?: boolean;
+  platform?: string;
+  externalUserId?: string;
+};
 
-  async createWorkspace(input: {
-    name: string;
-    discordGuildId: string;
-    timezone: string;
-    channelRefs: DiscordWorkspace["channelRefs"];
-  }): Promise<DiscordWorkspace> {
-    const workspace: DiscordWorkspace = {
-      id: randomUUID(),
+type LegacyDiscordIdentityInput = {
+  discordUserId?: string;
+};
+
+type LegacyDiscordWorkspaceInput = {
+  discordGuildId?: string;
+};
+
+export class ChallengeService {
+  private readonly memberRegistrationLocks = new Map<string, Promise<Member>>();
+  private readonly workspaceIntegrationLocks = new Map<string, Promise<Workspace>>();
+  constructor(
+    private readonly repository: ChallengeRepository,
+    private readonly runtime: MomentumRuntime = systemMomentumRuntime,
+  ) {}
+
+  async createWorkspace<T extends { name: string; timezone: string }>(input: T): Promise<Workspace> {
+    const workspace: Workspace = {
+      id: this.runtime.createId(),
       name: input.name,
-      discordGuildId: input.discordGuildId,
       timezone: input.timezone,
-      channelRefs: input.channelRefs,
-      createdAt: nowIso(),
+      createdAt: this.runtime.now(),
     };
     await this.repository.saveWorkspace(workspace);
+    const legacyInput = input as T & LegacyDiscordWorkspaceInput;
+    if (legacyInput.discordGuildId) {
+      await this.connectWorkspace({
+        workspaceId: workspace.id,
+        platform: "discord",
+        externalWorkspaceId: legacyInput.discordGuildId,
+      });
+    }
     return workspace;
   }
 
-  async registerMember(input: {
-    workspaceId: string;
-    discordUserId: string;
-    displayName: string;
-    profileImageUrl?: string;
-    profileImageSource?: Member["profileImageSource"];
-    isBot?: boolean;
-  }): Promise<Member> {
+  async registerMember<T extends RegisterMemberInput>(input: T): Promise<Member> {
+    const legacyInput = input as T & LegacyDiscordIdentityInput;
+    const platform = input.platform ?? (legacyInput.discordUserId ? "discord" : "legacy");
+    const externalUserId = input.externalUserId ?? legacyInput.discordUserId ?? this.runtime.createId();
+    const key = `${input.workspaceId}:${platform}:${externalUserId}`;
+    const activeRegistration = this.memberRegistrationLocks.get(key);
+    if (activeRegistration) {
+      return activeRegistration;
+    }
+
+    const registration = this.registerMemberWithIdentity(input, platform, externalUserId);
+    this.memberRegistrationLocks.set(key, registration);
+    try {
+      return await registration;
+    } finally {
+      if (this.memberRegistrationLocks.get(key) === registration) {
+        this.memberRegistrationLocks.delete(key);
+      }
+    }
+  }
+
+  private async registerMemberWithIdentity<T extends RegisterMemberInput>(
+    input: T,
+    platform: string,
+    externalUserId: string,
+  ): Promise<Member> {
     await this.requireWorkspace(input.workspaceId);
-    const existing = await this.repository.getMemberByDiscordUserId(input.workspaceId, input.discordUserId);
+    const existingIdentity = await this.repository.getMemberIdentity(
+      input.workspaceId,
+      platform,
+      externalUserId,
+    );
+    const existing = existingIdentity ? await this.repository.getMemberById(existingIdentity.memberId) : undefined;
+    if (existingIdentity && !existing) {
+      throw new DomainError("Member identity is linked to a missing member.");
+    }
     if (existing) {
       const nextIsBot = input.isBot ?? existing.isBot;
-      const nextProfileImageUrl = input.profileImageUrl ?? existing.profileImageUrl;
-      const nextProfileImageSource = input.profileImageUrl
+      const shouldRefreshPlatformProfile = Boolean(input.profileImageUrl) && existing.profileImageSource !== "custom_url";
+      const nextProfileImageUrl = shouldRefreshPlatformProfile ? input.profileImageUrl : existing.profileImageUrl;
+      const nextProfileImageSource = shouldRefreshPlatformProfile
         ? input.profileImageSource ?? "custom_url"
         : existing.profileImageSource;
       if (
@@ -85,17 +137,123 @@ export class ChallengeService {
     }
 
     const member: Member = {
-      id: randomUUID(),
+      id: this.memberId(input.workspaceId, platform, externalUserId),
       workspaceId: input.workspaceId,
-      discordUserId: input.discordUserId,
       displayName: input.displayName,
       profileImageUrl: input.profileImageUrl,
       profileImageSource: input.profileImageUrl ? input.profileImageSource ?? "custom_url" : undefined,
       isBot: input.isBot,
-      createdAt: nowIso(),
+      createdAt: this.runtime.now(),
     };
     await this.repository.saveMember(member);
+    await this.repository.saveMemberIdentity({
+      id: this.memberIdentityId(input.workspaceId, platform, externalUserId),
+      workspaceId: input.workspaceId,
+      memberId: member.id,
+      platform,
+      externalUserId,
+      createdAt: this.runtime.now(),
+    });
     return member;
+  }
+
+  async linkMemberIdentity(input: {
+    workspaceId: string;
+    memberId: string;
+    platform: string;
+    externalUserId: string;
+  }): Promise<void> {
+    await this.requireMember(input.memberId, input.workspaceId);
+    const existing = await this.repository.getMemberIdentity(
+      input.workspaceId,
+      input.platform,
+      input.externalUserId,
+    );
+    if (existing?.memberId === input.memberId) {
+      return;
+    }
+    if (existing) {
+      throw new DomainError("This platform identity is already linked to another member.");
+    }
+    await this.repository.saveMemberIdentity({
+      id: this.memberIdentityId(input.workspaceId, input.platform, input.externalUserId),
+      ...input,
+      createdAt: this.runtime.now(),
+    });
+  }
+
+  async getWorkspaceByIntegration(platform: string, externalWorkspaceId: string): Promise<Workspace | undefined> {
+    const integration = await this.repository.getWorkspaceIntegration(platform, externalWorkspaceId);
+    return integration ? this.repository.getWorkspaceById(integration.workspaceId) : undefined;
+  }
+
+  async getOrCreateWorkspaceForIntegration(input: {
+    name: string;
+    timezone: string;
+    platform: string;
+    externalWorkspaceId: string;
+  }): Promise<Workspace> {
+    const key = `${input.platform}:${input.externalWorkspaceId}`;
+    const activeResolution = this.workspaceIntegrationLocks.get(key);
+    if (activeResolution) {
+      return activeResolution;
+    }
+
+    const resolution = (async () => {
+      const existing = await this.getWorkspaceByIntegration(input.platform, input.externalWorkspaceId);
+      if (existing) {
+        return existing;
+      }
+      const workspace = await this.createWorkspaceWithId({
+        id: this.workspaceIdForIntegration(input.platform, input.externalWorkspaceId),
+        name: input.name,
+        timezone: input.timezone,
+        createdAt: this.runtime.now(),
+      });
+      await this.connectWorkspace({
+        workspaceId: workspace.id,
+        platform: input.platform,
+        externalWorkspaceId: input.externalWorkspaceId,
+      });
+      return workspace;
+    })();
+    this.workspaceIntegrationLocks.set(key, resolution);
+    try {
+      return await resolution;
+    } finally {
+      if (this.workspaceIntegrationLocks.get(key) === resolution) {
+        this.workspaceIntegrationLocks.delete(key);
+      }
+    }
+  }
+
+  async connectWorkspace(input: {
+    workspaceId: string;
+    platform: string;
+    externalWorkspaceId: string;
+  }): Promise<void> {
+    await this.requireWorkspace(input.workspaceId);
+    const existing = await this.repository.getWorkspaceIntegration(input.platform, input.externalWorkspaceId);
+    if (existing && existing.workspaceId !== input.workspaceId) {
+      throw new DomainError("This platform workspace is already connected to another workspace.");
+    }
+    if (!existing) {
+      await this.repository.saveWorkspaceIntegration({
+        id: this.workspaceIntegrationId(input.platform, input.externalWorkspaceId),
+        ...input,
+        createdAt: this.runtime.now(),
+      });
+    }
+  }
+
+  async getMember(memberId: string, workspaceId: string): Promise<Member | undefined> {
+    const member = await this.repository.getMemberById(memberId);
+    return member?.workspaceId === workspaceId ? member : undefined;
+  }
+
+  async listMembers(workspaceId: string): Promise<Member[]> {
+    await this.requireWorkspace(workspaceId);
+    return this.repository.listMembersByWorkspace(workspaceId);
   }
 
   async setMemberProfileImage(input: {
@@ -117,20 +275,20 @@ export class ChallengeService {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getChallengeByMonth(input.workspaceId, input.month);
     if (existing) {
-      await this.ensureDefaultPrompts(existing);
+      await this.ensureDefaultNotificationIntents(existing);
       return existing;
     }
 
     const challenge: MonthlyChallenge = {
-      id: randomUUID(),
+      id: this.runtime.createId(),
       workspaceId: input.workspaceId,
       month: input.month,
       kind: "monthly_distance_km",
       status: "open",
-      createdAt: nowIso(),
+      createdAt: this.runtime.now(),
     };
     await this.repository.saveChallenge(challenge);
-    await this.ensureDefaultPrompts(challenge);
+    await this.ensureDefaultNotificationIntents(challenge);
 
     return challenge;
   }
@@ -140,11 +298,11 @@ export class ChallengeService {
     await this.requireParticipantMember(input.memberId, input.workspaceId);
 
     const assignment: LeaderAssignment = {
-      id: randomUUID(),
+      id: this.runtime.createId(),
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
       memberId: input.memberId,
-      assignedAt: nowIso(),
+      assignedAt: this.runtime.now(),
     };
     await this.repository.saveLeaderAssignment(assignment);
     return assignment;
@@ -164,9 +322,9 @@ export class ChallengeService {
 
     const carryoverKm = await this.getCarryoverForMember(input.workspaceId, input.month, input.memberId);
     const existing = await this.repository.getGoal(challenge.id, input.memberId);
-    const timestamp = nowIso();
+    const timestamp = this.runtime.now();
     const goal: MonthlyGoal = {
-      id: existing?.id ?? randomUUID(),
+      id: existing?.id ?? this.runtime.createId(),
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
       memberId: input.memberId,
@@ -217,7 +375,7 @@ export class ChallengeService {
     }
 
     const submission: RunSubmission = {
-      id: randomUUID(),
+      id: this.runtime.createId(),
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
       memberId: input.memberId,
@@ -228,7 +386,7 @@ export class ChallengeService {
       evidenceLabel: input.evidenceLabel,
       userNote: input.userNote,
       status: "accepted",
-      acceptedAt: nowIso(),
+      acceptedAt: this.runtime.now(),
     };
     await this.repository.saveSubmission(submission);
     return submission;
@@ -283,12 +441,12 @@ export class ChallengeService {
     await this.requireParticipantMember(input.assignedByMemberId, input.workspaceId);
 
     const record: PunishmentRecord = {
-      id: randomUUID(),
+      id: this.runtime.createId(),
       workspaceId: input.workspaceId,
       challengeId: challenge.id,
       assignedByMemberId: input.assignedByMemberId,
       note: input.note,
-      createdAt: nowIso(),
+      createdAt: this.runtime.now(),
     };
     await this.repository.savePunishmentRecord(record);
     return record;
@@ -337,7 +495,7 @@ export class ChallengeService {
           )
         : members;
     const statuses = buildMemberMonthStatuses(membersForClose, goals, submissions);
-    const closedAt = challenge.closedAt ?? existingCloseCutoff ?? nowIso();
+    const closedAt = challenge.closedAt ?? existingCloseCutoff ?? this.runtime.now();
     const results: MonthCloseSummary["results"] = [];
 
     for (const status of statuses) {
@@ -412,15 +570,15 @@ export class ChallengeService {
     submissions: RunSubmission[];
     leaderboard: LeaderboardRow[];
     leaderId?: string;
-    prompts: ScheduledPrompt[];
+    notificationIntents: NotificationIntent[];
   }> {
     const challenge = await this.requireChallenge(input.workspaceId, input.month);
-    const [goals, submissions, leaderboard, leader, prompts] = await Promise.all([
+    const [goals, submissions, leaderboard, leader, notificationIntents] = await Promise.all([
       this.repository.listGoalsByChallenge(challenge.id),
       this.repository.listSubmissionsByChallenge(challenge.id),
       this.getLeaderboard(input),
       this.repository.getLeaderAssignmentByChallenge(challenge.id),
-      this.repository.listScheduledPromptsByChallenge(challenge.id),
+      this.repository.listNotificationIntentsByChallenge(challenge.id),
     ]);
 
     return {
@@ -429,74 +587,95 @@ export class ChallengeService {
       submissions,
       leaderboard,
       leaderId: leader?.memberId,
-      prompts,
+      notificationIntents,
     };
   }
 
-  private buildDefaultPrompts(challenge: MonthlyChallenge): ScheduledPrompt[] {
+  private buildDefaultNotificationIntents(challenge: MonthlyChallenge): NotificationIntent[] {
     const start = monthStartIso(challenge.month);
     const close = monthCloseIso(challenge.month);
-    const prompts: Array<{ kind: PromptKind; offsetDays: number; channelKey: ScheduledPrompt["channelKey"] }> = [
-      { kind: "month_start", offsetDays: 0, channelKey: "announcements" },
-      { kind: "leaderboard_update", offsetDays: 3, channelKey: "leaderboard" },
-      { kind: "weekly_reminder", offsetDays: 7, channelKey: "announcements" },
-      { kind: "leaderboard_update", offsetDays: 10, channelKey: "leaderboard" },
-      { kind: "weekly_reminder", offsetDays: 14, channelKey: "announcements" },
-      { kind: "leaderboard_update", offsetDays: 17, channelKey: "leaderboard" },
-      { kind: "weekly_reminder", offsetDays: 21, channelKey: "announcements" },
-      { kind: "leaderboard_update", offsetDays: 24, channelKey: "leaderboard" },
+    const notifications: Array<{ kind: PromptKind; offsetDays: number; audience: NotificationAudience }> = [
+      { kind: "month_start", offsetDays: 0, audience: "workspace" },
+      { kind: "leaderboard_update", offsetDays: 3, audience: "workspace" },
+      { kind: "weekly_reminder", offsetDays: 7, audience: "workspace" },
+      { kind: "leaderboard_update", offsetDays: 10, audience: "workspace" },
+      { kind: "weekly_reminder", offsetDays: 14, audience: "workspace" },
+      { kind: "leaderboard_update", offsetDays: 17, audience: "workspace" },
+      { kind: "weekly_reminder", offsetDays: 21, audience: "workspace" },
+      { kind: "leaderboard_update", offsetDays: 24, audience: "workspace" },
     ];
 
     return [
-      ...prompts.map((prompt) => ({
-        id: this.scheduledPromptId(challenge.id, prompt.kind, prompt.offsetDays, prompt.channelKey),
+      ...notifications.map((notification) => ({
+        id: this.notificationIntentId(challenge.id, notification.kind, notification.offsetDays, notification.audience),
         workspaceId: challenge.workspaceId,
         challengeId: challenge.id,
         month: challenge.month,
-        kind: prompt.kind,
-        scheduledFor: addDays(start, prompt.offsetDays),
-        channelKey: prompt.channelKey,
+        kind: notification.kind,
+        scheduledFor: addDays(start, notification.offsetDays),
+        audience: notification.audience,
       })),
       {
-        id: this.scheduledPromptId(challenge.id, "month_close", -1, "announcements"),
+        id: this.notificationIntentId(challenge.id, "month_close", -1, "workspace"),
         workspaceId: challenge.workspaceId,
         challengeId: challenge.id,
         month: challenge.month,
         kind: "month_close",
         scheduledFor: close,
-        channelKey: "announcements",
+        audience: "workspace",
       },
     ];
   }
 
-  private async ensureDefaultPrompts(challenge: MonthlyChallenge): Promise<void> {
-    const existingPrompts = await this.repository.listScheduledPromptsByChallenge(challenge.id);
-    const existingPromptsByKey = new Map(
-      existingPrompts.map((prompt) => [this.scheduledPromptKey(prompt), prompt]),
+  private async ensureDefaultNotificationIntents(challenge: MonthlyChallenge): Promise<void> {
+    const existingIntents = await this.repository.listNotificationIntentsByChallenge(challenge.id);
+    const existingIntentsByKey = new Map(
+      existingIntents.map((intent) => [this.notificationIntentKey(intent), intent]),
     );
 
-    for (const prompt of this.buildDefaultPrompts(challenge)) {
-      const existingPrompt = existingPromptsByKey.get(this.scheduledPromptKey(prompt));
-      if (!existingPrompt || existingPrompt.id === prompt.id) {
-        await this.repository.saveScheduledPrompt({
-          ...prompt,
-          deliveredAt: existingPrompt?.deliveredAt,
+    for (const intent of this.buildDefaultNotificationIntents(challenge)) {
+      const existingIntent = existingIntentsByKey.get(this.notificationIntentKey(intent));
+      if (!existingIntent || existingIntent.id === intent.id) {
+        await this.repository.saveNotificationIntent({
+          ...intent,
+          deliveredAt: existingIntent?.deliveredAt,
         });
       }
     }
   }
 
-  private scheduledPromptKey(prompt: Pick<ScheduledPrompt, "kind" | "scheduledFor" | "channelKey">): string {
-    return `${prompt.kind}:${prompt.scheduledFor}:${prompt.channelKey}`;
+  private notificationIntentKey(intent: Pick<NotificationIntent, "kind" | "scheduledFor" | "audience">): string {
+    return `${intent.kind}:${intent.scheduledFor}:${intent.audience}`;
   }
 
-  private scheduledPromptId(
+  private notificationIntentId(
     challengeId: string,
     kind: PromptKind,
     offsetDays: number,
-    channelKey: ScheduledPrompt["channelKey"],
+    audience: NotificationAudience,
   ): string {
-    return `scheduled-prompt:${challengeId}:${kind}:${offsetDays}:${channelKey}`;
+    return `notification-intent:${challengeId}:${kind}:${offsetDays}:${audience}`;
+  }
+
+  private async createWorkspaceWithId(input: Workspace): Promise<Workspace> {
+    await this.repository.saveWorkspace(input);
+    return input;
+  }
+
+  private workspaceIdForIntegration(platform: string, externalWorkspaceId: string): string {
+    return `workspace:${JSON.stringify([platform, externalWorkspaceId])}`;
+  }
+
+  private workspaceIntegrationId(platform: string, externalWorkspaceId: string): string {
+    return `workspace-integration:${JSON.stringify([platform, externalWorkspaceId])}`;
+  }
+
+  private memberId(workspaceId: string, platform: string, externalUserId: string): string {
+    return `member:${JSON.stringify([workspaceId, platform, externalUserId])}`;
+  }
+
+  private memberIdentityId(workspaceId: string, platform: string, externalUserId: string): string {
+    return `member-identity:${JSON.stringify([workspaceId, platform, externalUserId])}`;
   }
 
   private monthlyResultId(challengeId: string, memberId: string): string {
@@ -565,7 +744,7 @@ export class ChallengeService {
       .reduce((total, carryover) => total + carryover.amountKm, 0);
   }
 
-  private async requireWorkspace(workspaceId: string): Promise<DiscordWorkspace> {
+  private async requireWorkspace(workspaceId: string): Promise<Workspace> {
     const workspace = await this.repository.getWorkspaceById(workspaceId);
     if (!workspace) {
       throw new DomainError("Workspace does not exist.");

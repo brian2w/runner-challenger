@@ -10,20 +10,12 @@ async function main(): Promise<void> {
   const handler = new DiscordCommandHandler(service, repository);
   const workspace = await service.createWorkspace({
     name: "Runner Challenger Dry Run",
-    discordGuildId: "dry-run-guild",
     timezone: "Australia/Sydney",
-    channelRefs: {
-      rules: "rules",
-      announcements: "announcements",
-      progressLog: "progress-log",
-      leaderboard: "leaderboard",
-      chat: "chat",
-      combined: "combined",
-    },
   });
   const brian = await service.registerMember({
     workspaceId: workspace.id,
-    discordUserId: "discord-brian",
+    platform: "discord",
+    externalUserId: "discord-brian",
     displayName: "Brian",
   });
   await service.startMonth({ workspaceId: workspace.id, month });

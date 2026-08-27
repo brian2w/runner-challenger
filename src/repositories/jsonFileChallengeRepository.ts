@@ -2,7 +2,6 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   CarryoverPenalty,
-  DiscordWorkspace,
   LeaderAssignment,
   Member,
   MonthlyChallenge,
@@ -10,13 +9,17 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
-  ScheduledPrompt,
+  NotificationIntent,
+  Workspace,
 } from "../core/types.js";
+import type { MemberIdentity, WorkspaceIntegration } from "../application/platformIdentityRepository.js";
 import { InMemoryChallengeRepository } from "./inMemoryChallengeRepository.js";
 
 interface RepositorySnapshot {
-  workspaces: DiscordWorkspace[];
+  workspaces: Workspace[];
+  workspaceIntegrations: WorkspaceIntegration[];
   members: Member[];
+  memberIdentities: MemberIdentity[];
   challenges: MonthlyChallenge[];
   leaderAssignments: LeaderAssignment[];
   goals: MonthlyGoal[];
@@ -24,7 +27,20 @@ interface RepositorySnapshot {
   carryovers: CarryoverPenalty[];
   results: MonthlyResult[];
   punishments: PunishmentRecord[];
-  prompts: ScheduledPrompt[];
+  notificationIntents: NotificationIntent[];
+}
+
+interface LegacyDiscordWorkspace extends Workspace {
+  discordGuildId?: string;
+}
+
+interface LegacyDiscordMember extends Omit<Member, "profileImageSource"> {
+  discordUserId?: string;
+  profileImageSource?: "discord_avatar" | "custom_url" | "platform_avatar";
+}
+
+interface LegacyScheduledPrompt extends NotificationIntent {
+  channelKey?: string;
 }
 
 export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
@@ -42,9 +58,21 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
 
     await mkdir(dirname(this.filePath), { recursive: true });
     try {
-      const snapshot = JSON.parse(await readFile(this.filePath, "utf8")) as Partial<RepositorySnapshot>;
-      this.loadMap(this.workspaces, snapshot.workspaces);
-      this.loadMap(this.members, snapshot.members);
+      const snapshot = JSON.parse(await readFile(this.filePath, "utf8")) as Partial<RepositorySnapshot> & {
+        prompts?: LegacyScheduledPrompt[];
+      };
+      const legacyWorkspaces = (snapshot.workspaces ?? []) as LegacyDiscordWorkspace[];
+      const legacyMembers = (snapshot.members ?? []) as LegacyDiscordMember[];
+      this.loadMap(this.workspaces, legacyWorkspaces.map(({ id, name, timezone, createdAt }) => ({ id, name, timezone, createdAt })));
+      this.loadMap(this.members, legacyMembers.map((member) => ({
+        id: member.id,
+        workspaceId: member.workspaceId,
+        displayName: member.displayName,
+        profileImageUrl: member.profileImageUrl,
+        profileImageSource: member.profileImageSource === "discord_avatar" ? "platform_avatar" : member.profileImageSource,
+        isBot: member.isBot,
+        createdAt: member.createdAt,
+      })));
       this.loadMap(this.challenges, snapshot.challenges);
       this.loadMap(this.leaderAssignments, snapshot.leaderAssignments);
       this.loadMap(this.goals, snapshot.goals);
@@ -52,7 +80,24 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
       this.loadMap(this.carryovers, snapshot.carryovers);
       this.loadMap(this.results, snapshot.results);
       this.loadMap(this.punishments, snapshot.punishments);
-      this.loadMap(this.prompts, snapshot.prompts);
+      this.loadMap(this.workspaceIntegrations, snapshot.workspaceIntegrations);
+      this.loadMap(this.memberIdentities, snapshot.memberIdentities);
+      this.loadMap(
+        this.notificationIntents,
+        (snapshot.notificationIntents ?? snapshot.prompts)?.map(({ id, workspaceId, challengeId, month, kind, scheduledFor, audience, deliveredAt }) => ({
+          id,
+          workspaceId,
+          challengeId,
+          month,
+          kind,
+          scheduledFor,
+          audience: audience ?? "workspace",
+          deliveredAt,
+        })),
+      );
+      if (this.migrateLegacyDiscordIdentities(legacyWorkspaces, legacyMembers) || snapshot.prompts) {
+        await this.persist();
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -63,13 +108,23 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
     this.ready = true;
   }
 
-  override async saveWorkspace(workspace: DiscordWorkspace): Promise<void> {
+  override async saveWorkspace(workspace: Workspace): Promise<void> {
     await super.saveWorkspace(workspace);
     await this.persist();
   }
 
   override async saveMember(member: Member): Promise<void> {
     await super.saveMember(member);
+    await this.persist();
+  }
+
+  override async saveWorkspaceIntegration(integration: WorkspaceIntegration): Promise<void> {
+    await super.saveWorkspaceIntegration(integration);
+    await this.persist();
+  }
+
+  override async saveMemberIdentity(identity: MemberIdentity): Promise<void> {
+    await super.saveMemberIdentity(identity);
     await this.persist();
   }
 
@@ -113,8 +168,8 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
     await this.persist();
   }
 
-  override async saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void> {
-    await super.saveScheduledPrompt(prompt);
+  override async saveNotificationIntent(intent: NotificationIntent): Promise<void> {
+    await super.saveNotificationIntent(intent);
     await this.persist();
   }
 
@@ -122,6 +177,46 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
     for (const record of records ?? []) {
       target.set(record.id, record);
     }
+  }
+
+  private migrateLegacyDiscordIdentities(
+    workspaces: LegacyDiscordWorkspace[],
+    members: LegacyDiscordMember[],
+  ): boolean {
+    let migrated = false;
+    for (const workspace of workspaces) {
+      if (workspace.discordGuildId && ![...this.workspaceIntegrations.values()].some(
+        (integration) => integration.platform === "discord" && integration.externalWorkspaceId === workspace.discordGuildId,
+      )) {
+        this.workspaceIntegrations.set(`workspace-integration:${workspace.id}:discord`, {
+          id: `workspace-integration:${workspace.id}:discord`,
+          workspaceId: workspace.id,
+          platform: "discord",
+          externalWorkspaceId: workspace.discordGuildId,
+          createdAt: workspace.createdAt,
+        });
+        migrated = true;
+      }
+    }
+    for (const member of members) {
+      if (member.discordUserId && ![...this.memberIdentities.values()].some(
+        (identity) =>
+          identity.workspaceId === member.workspaceId &&
+          identity.platform === "discord" &&
+          identity.externalUserId === member.discordUserId,
+      )) {
+        this.memberIdentities.set(`member-identity:${member.id}:discord`, {
+          id: `member-identity:${member.id}:discord`,
+          workspaceId: member.workspaceId,
+          memberId: member.id,
+          platform: "discord",
+          externalUserId: member.discordUserId,
+          createdAt: member.createdAt,
+        });
+        migrated = true;
+      }
+    }
+    return migrated;
   }
 
   private async persist(): Promise<void> {
@@ -136,7 +231,9 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
         carryovers: [...this.carryovers.values()],
         results: [...this.results.values()],
         punishments: [...this.punishments.values()],
-        prompts: [...this.prompts.values()],
+        workspaceIntegrations: [...this.workspaceIntegrations.values()],
+        memberIdentities: [...this.memberIdentities.values()],
+        notificationIntents: [...this.notificationIntents.values()],
       };
       const tempPath = `${this.filePath}.writing`;
       await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`);

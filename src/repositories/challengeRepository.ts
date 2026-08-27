@@ -1,6 +1,5 @@
 import type {
   CarryoverPenalty,
-  DiscordWorkspace,
   LeaderAssignment,
   Member,
   MonthlyChallenge,
@@ -8,18 +7,18 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
-  ScheduledPrompt,
+  NotificationIntent,
+  Workspace,
 } from "../core/types.js";
+import type { PlatformIdentityRepository } from "../application/platformIdentityRepository.js";
 
-export interface ChallengeRepository {
-  saveWorkspace(workspace: DiscordWorkspace): Promise<void>;
-  getWorkspaceById(workspaceId: string): Promise<DiscordWorkspace | undefined>;
-  getWorkspaceByGuildId(discordGuildId: string): Promise<DiscordWorkspace | undefined>;
-  listWorkspaces(): Promise<DiscordWorkspace[]>;
+export interface ChallengeRepository extends PlatformIdentityRepository {
+  saveWorkspace(workspace: Workspace): Promise<void>;
+  getWorkspaceById(workspaceId: string): Promise<Workspace | undefined>;
+  listWorkspaces(): Promise<Workspace[]>;
 
   saveMember(member: Member): Promise<void>;
   getMemberById(memberId: string): Promise<Member | undefined>;
-  getMemberByDiscordUserId(workspaceId: string, discordUserId: string): Promise<Member | undefined>;
   listMembersByWorkspace(workspaceId: string): Promise<Member[]>;
 
   saveChallenge(challenge: MonthlyChallenge): Promise<void>;
@@ -47,6 +46,6 @@ export interface ChallengeRepository {
   deletePunishmentRecord(punishmentId: string): Promise<void>;
   listPunishmentsByChallenge(challengeId: string): Promise<PunishmentRecord[]>;
 
-  saveScheduledPrompt(prompt: ScheduledPrompt): Promise<void>;
-  listScheduledPromptsByChallenge(challengeId: string): Promise<ScheduledPrompt[]>;
+  saveNotificationIntent(intent: NotificationIntent): Promise<void>;
+  listNotificationIntentsByChallenge(challengeId: string): Promise<NotificationIntent[]>;
 }
