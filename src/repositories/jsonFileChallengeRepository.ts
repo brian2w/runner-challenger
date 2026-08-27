@@ -10,8 +10,10 @@ import type {
   PunishmentRecord,
   RunSubmission,
   NotificationIntent,
+  NotificationAudience,
   Workspace,
 } from "../core/types.js";
+import { memberIdentityId, workspaceIntegrationId } from "../core/identityIds.js";
 import type { MemberIdentity, WorkspaceIntegration } from "../application/platformIdentityRepository.js";
 import { InMemoryChallengeRepository } from "./inMemoryChallengeRepository.js";
 
@@ -39,7 +41,8 @@ interface LegacyDiscordMember extends Omit<Member, "profileImageSource"> {
   profileImageSource?: "discord_avatar" | "custom_url" | "platform_avatar";
 }
 
-interface LegacyScheduledPrompt extends NotificationIntent {
+interface LegacyScheduledPrompt extends Omit<NotificationIntent, "audience"> {
+  audience?: NotificationAudience;
   channelKey?: string;
 }
 
@@ -188,8 +191,8 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
       if (workspace.discordGuildId && ![...this.workspaceIntegrations.values()].some(
         (integration) => integration.platform === "discord" && integration.externalWorkspaceId === workspace.discordGuildId,
       )) {
-        this.workspaceIntegrations.set(`workspace-integration:${workspace.id}:discord`, {
-          id: `workspace-integration:${workspace.id}:discord`,
+        this.workspaceIntegrations.set(workspaceIntegrationId("discord", workspace.discordGuildId), {
+          id: workspaceIntegrationId("discord", workspace.discordGuildId),
           workspaceId: workspace.id,
           platform: "discord",
           externalWorkspaceId: workspace.discordGuildId,
@@ -205,8 +208,8 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
           identity.platform === "discord" &&
           identity.externalUserId === member.discordUserId,
       )) {
-        this.memberIdentities.set(`member-identity:${member.id}:discord`, {
-          id: `member-identity:${member.id}:discord`,
+        this.memberIdentities.set(memberIdentityId(member.workspaceId, "discord", member.discordUserId), {
+          id: memberIdentityId(member.workspaceId, "discord", member.discordUserId),
           workspaceId: member.workspaceId,
           memberId: member.id,
           platform: "discord",

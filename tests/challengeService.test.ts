@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { DiscordCommandHandler } from "../src/adapters/discord/discordCommandHandler.js";
 import { DiscordPresenter } from "../src/adapters/discord/discordPresenter.js";
+import { memberIdentityId } from "../src/core/identityIds.js";
 import { createMonthKey, createMonthKeyForDate } from "../src/core/time.js";
 import { InMemoryChallengeRepository } from "../src/repositories/inMemoryChallengeRepository.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
@@ -1508,6 +1509,18 @@ describe("ChallengeService", () => {
     equal(updated.displayName, "Johnny");
   });
 
+  it("rejects member registration without a platform identity", async () => {
+    const fixture = await createFixture();
+
+    await rejects(
+      () => fixture.service.registerMember({
+        workspaceId: fixture.workspace.id,
+        displayName: "Unlinked Runner",
+      }),
+      /requires a platform identity/,
+    );
+  });
+
   it("links multiple platform identities to one member without changing challenge membership", async () => {
     const fixture = await createFixture();
 
@@ -1780,6 +1793,7 @@ describe("ChallengeService", () => {
 
     equal(workspace?.id, "workspace-1");
     equal(identity?.memberId, "member-1");
+    equal(identity?.id, memberIdentityId("workspace-1", "discord", "discord-john"));
     equal((await repository.listNotificationIntentsByChallenge("challenge-1"))[0]?.audience, "workspace");
     ok(Array.isArray(persisted.workspaceIntegrations));
     ok(Array.isArray(persisted.memberIdentities));

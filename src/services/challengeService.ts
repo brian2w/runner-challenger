@@ -6,6 +6,7 @@ import {
   computeEffectiveGoal,
 } from "../core/calculations.js";
 import { DomainError } from "../core/errors.js";
+import { memberId, memberIdentityId, workspaceIdForIntegration, workspaceIntegrationId } from "../core/identityIds.js";
 import { addDays, isIsoDate, isIsoDateInMonth, monthCloseIso, monthStartIso, nextMonth } from "../core/time.js";
 import { systemMomentumRuntime, type MomentumRuntime } from "../core/runtime.js";
 import type {
@@ -55,28 +56,33 @@ export class ChallengeService {
   ) {}
 
   async createWorkspace<T extends { name: string; timezone: string }>(input: T): Promise<Workspace> {
+    const legacyInput = input as T & LegacyDiscordWorkspaceInput;
     const workspace: Workspace = {
-      id: this.runtime.createId(),
+      id: legacyInput.discordGuildId
+        ? workspaceIdForIntegration("discord", legacyInput.discordGuildId)
+        : this.runtime.createId(),
       name: input.name,
       timezone: input.timezone,
       createdAt: this.runtime.now(),
     };
-    await this.repository.saveWorkspace(workspace);
-    const legacyInput = input as T & LegacyDiscordWorkspaceInput;
     if (legacyInput.discordGuildId) {
-      await this.connectWorkspace({
+      await this.reserveWorkspaceIntegration({
         workspaceId: workspace.id,
         platform: "discord",
         externalWorkspaceId: legacyInput.discordGuildId,
       });
     }
+    await this.repository.saveWorkspace(workspace);
     return workspace;
   }
 
   async registerMember<T extends RegisterMemberInput>(input: T): Promise<Member> {
     const legacyInput = input as T & LegacyDiscordIdentityInput;
     const platform = input.platform ?? (legacyInput.discordUserId ? "discord" : "legacy");
-    const externalUserId = input.externalUserId ?? legacyInput.discordUserId ?? this.runtime.createId();
+    const externalUserId = input.externalUserId ?? legacyInput.discordUserId;
+    if (!externalUserId) {
+      throw new DomainError("Member registration requires a platform identity.");
+    }
     const key = `${input.workspaceId}:${platform}:${externalUserId}`;
     const activeRegistration = this.memberRegistrationLocks.get(key);
     if (activeRegistration) {
@@ -114,7 +120,7 @@ export class ChallengeService {
       const shouldRefreshPlatformProfile = Boolean(input.profileImageUrl) && existing.profileImageSource !== "custom_url";
       const nextProfileImageUrl = shouldRefreshPlatformProfile ? input.profileImageUrl : existing.profileImageUrl;
       const nextProfileImageSource = shouldRefreshPlatformProfile
-        ? input.profileImageSource ?? "custom_url"
+        ? input.profileImageSource ?? "platform_avatar"
         : existing.profileImageSource;
       if (
         existing.displayName === input.displayName &&
@@ -137,17 +143,17 @@ export class ChallengeService {
     }
 
     const member: Member = {
-      id: this.memberId(input.workspaceId, platform, externalUserId),
+      id: memberId(input.workspaceId, platform, externalUserId),
       workspaceId: input.workspaceId,
       displayName: input.displayName,
       profileImageUrl: input.profileImageUrl,
-      profileImageSource: input.profileImageUrl ? input.profileImageSource ?? "custom_url" : undefined,
+      profileImageSource: input.profileImageUrl ? input.profileImageSource ?? "platform_avatar" : undefined,
       isBot: input.isBot,
       createdAt: this.runtime.now(),
     };
     await this.repository.saveMember(member);
     await this.repository.saveMemberIdentity({
-      id: this.memberIdentityId(input.workspaceId, platform, externalUserId),
+      id: memberIdentityId(input.workspaceId, platform, externalUserId),
       workspaceId: input.workspaceId,
       memberId: member.id,
       platform,
@@ -176,7 +182,7 @@ export class ChallengeService {
       throw new DomainError("This platform identity is already linked to another member.");
     }
     await this.repository.saveMemberIdentity({
-      id: this.memberIdentityId(input.workspaceId, input.platform, input.externalUserId),
+      id: memberIdentityId(input.workspaceId, input.platform, input.externalUserId),
       ...input,
       createdAt: this.runtime.now(),
     });
@@ -205,7 +211,7 @@ export class ChallengeService {
         return existing;
       }
       const workspace = await this.createWorkspaceWithId({
-        id: this.workspaceIdForIntegration(input.platform, input.externalWorkspaceId),
+        id: workspaceIdForIntegration(input.platform, input.externalWorkspaceId),
         name: input.name,
         timezone: input.timezone,
         createdAt: this.runtime.now(),
@@ -233,13 +239,21 @@ export class ChallengeService {
     externalWorkspaceId: string;
   }): Promise<void> {
     await this.requireWorkspace(input.workspaceId);
+    await this.reserveWorkspaceIntegration(input);
+  }
+
+  private async reserveWorkspaceIntegration(input: {
+    workspaceId: string;
+    platform: string;
+    externalWorkspaceId: string;
+  }): Promise<void> {
     const existing = await this.repository.getWorkspaceIntegration(input.platform, input.externalWorkspaceId);
     if (existing && existing.workspaceId !== input.workspaceId) {
       throw new DomainError("This platform workspace is already connected to another workspace.");
     }
     if (!existing) {
       await this.repository.saveWorkspaceIntegration({
-        id: this.workspaceIntegrationId(input.platform, input.externalWorkspaceId),
+        id: workspaceIntegrationId(input.platform, input.externalWorkspaceId),
         ...input,
         createdAt: this.runtime.now(),
       });
@@ -660,22 +674,6 @@ export class ChallengeService {
   private async createWorkspaceWithId(input: Workspace): Promise<Workspace> {
     await this.repository.saveWorkspace(input);
     return input;
-  }
-
-  private workspaceIdForIntegration(platform: string, externalWorkspaceId: string): string {
-    return `workspace:${JSON.stringify([platform, externalWorkspaceId])}`;
-  }
-
-  private workspaceIntegrationId(platform: string, externalWorkspaceId: string): string {
-    return `workspace-integration:${JSON.stringify([platform, externalWorkspaceId])}`;
-  }
-
-  private memberId(workspaceId: string, platform: string, externalUserId: string): string {
-    return `member:${JSON.stringify([workspaceId, platform, externalUserId])}`;
-  }
-
-  private memberIdentityId(workspaceId: string, platform: string, externalUserId: string): string {
-    return `member-identity:${JSON.stringify([workspaceId, platform, externalUserId])}`;
   }
 
   private monthlyResultId(challengeId: string, memberId: string): string {

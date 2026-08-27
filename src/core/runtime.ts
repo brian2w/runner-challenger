@@ -4,6 +4,7 @@ export interface MomentumRuntime {
 }
 
 export const systemMomentumRuntime: MomentumRuntime = {
-  createId: () => crypto.randomUUID(),
+  createId: () => randomUUID(),
   now: () => new Date().toISOString(),
 };
+import { randomUUID } from "node:crypto";
