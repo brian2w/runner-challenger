@@ -74,6 +74,48 @@ export interface RunSubmission {
   acceptedAt: string;
 }
 
+export interface SleepSubmission {
+  id: string;
+  workspaceId: string;
+  memberId: string;
+  sleepDate: string;
+  totalSleepMinutes: number;
+  sleepStart?: string;
+  sleepEnd?: string;
+  deepSleepMinutes?: number;
+  lightSleepMinutes?: number;
+  remSleepMinutes?: number;
+  awakeMinutes?: number;
+  proofSubmitted: boolean;
+  acceptedAt: string;
+  updatedAt: string;
+}
+
+export interface SleepLeaderboardRow {
+  memberId: string;
+  displayName: string;
+  averageScore: number;
+  nightsLogged: number;
+  streak: number;
+  qualifies: boolean;
+  rank?: number;
+}
+
+export interface SleepStageInsight {
+  label: "Deep" | "REM" | "Awake";
+  latestMinutes: number;
+  usualMinutes: number;
+  regularityScore: number;
+}
+
+export interface SleepInsights {
+  baselineNights: number;
+  requiredBaselineNights: number;
+  averageScore: number;
+  latest?: SleepSubmission;
+  stageInsights: SleepStageInsight[];
+}
+
 export interface CarryoverPenalty {
   id: string;
   workspaceId: string;

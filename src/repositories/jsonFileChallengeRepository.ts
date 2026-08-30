@@ -9,6 +9,7 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
+  SleepSubmission,
   NotificationIntent,
   NotificationAudience,
   Workspace,
@@ -26,6 +27,7 @@ interface RepositorySnapshot {
   leaderAssignments: LeaderAssignment[];
   goals: MonthlyGoal[];
   submissions: RunSubmission[];
+  sleepSubmissions: SleepSubmission[];
   carryovers: CarryoverPenalty[];
   results: MonthlyResult[];
   punishments: PunishmentRecord[];
@@ -80,6 +82,7 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
       this.loadMap(this.leaderAssignments, snapshot.leaderAssignments);
       this.loadMap(this.goals, snapshot.goals);
       this.loadMap(this.submissions, snapshot.submissions);
+      this.loadMap(this.sleepSubmissions, snapshot.sleepSubmissions);
       this.loadMap(this.carryovers, snapshot.carryovers);
       this.loadMap(this.results, snapshot.results);
       this.loadMap(this.punishments, snapshot.punishments);
@@ -148,6 +151,11 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
 
   override async saveSubmission(submission: RunSubmission): Promise<void> {
     await super.saveSubmission(submission);
+    await this.persist();
+  }
+
+  override async saveSleepSubmission(submission: SleepSubmission): Promise<void> {
+    await super.saveSleepSubmission(submission);
     await this.persist();
   }
 
@@ -231,6 +239,7 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
         leaderAssignments: [...this.leaderAssignments.values()],
         goals: [...this.goals.values()],
         submissions: [...this.submissions.values()],
+        sleepSubmissions: [...this.sleepSubmissions.values()],
         carryovers: [...this.carryovers.values()],
         results: [...this.results.values()],
         punishments: [...this.punishments.values()],

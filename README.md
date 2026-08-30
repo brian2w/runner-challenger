@@ -7,6 +7,7 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 - Registers Discord slash commands for goal setting, screenshot-backed proof submissions, status, and leaderboard views.
 - Tracks monthly goals, carryover penalties, leader assignments, admin run overrides, punishment notes, and month close summaries.
 - Can read clear run screenshots with local Tesseract OCR when users do not type distance/date.
+- Runs a proof-backed weekly Garmin sleep challenge with public normalized scores and private stage insights.
 - Persists state to a JSON file so the bot survives restarts.
 - Keeps the challenge core independent from Discord so a later web app can reuse the same service layer.
 
@@ -16,6 +17,10 @@ Discord-first running challenge bot for the monthly group accountability MVP.
 | --- | --- |
 | `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
 | `/run-submit proof [distance_km] [run_date] [source] [note]` | Log a run with phone screenshot proof. If distance/date are omitted, the bot can privately read the screenshot and show Log Run / Cancel buttons before saving. |
+| `/sleep-submit proof total_sleep_minutes sleep_date [sleep_start] [sleep_end] [deep_sleep_minutes] [light_sleep_minutes] [rem_sleep_minutes] [awake_minutes]` | Log a Garmin sleep screenshot. The date is the local wake date; optional stages stay private. |
+| `/sleep-leaderboard` | Show qualifying standings for the current Monday-Sunday sleep week. |
+| `/sleep-status` | Show your current average, logged nights, streak, and qualification status. |
+| `/sleep-insights` | Privately compare Garmin stage estimates with your own history. |
 | `/profile-set image_url` | Set a custom profile image URL for status thumbnails and future richer leaderboard cards. |
 | `/leaderboard` | Show current standings for the active month. |
 | `/status` | Show your current month progress against your goal. |
@@ -67,6 +72,18 @@ Users submit runs directly in Discord:
 Typed `distance_km` and `run_date` log immediately. If those fields are omitted and OCR can read the screenshot, the bot privately asks the user to confirm the detected distance/date with a `Log Run` button. If OCR cannot read the screenshot clearly, rerun the command with the values typed manually.
 
 The OCR boundary is provider-based so Tesseract can be replaced later with PaddleOCR, native mobile OCR, or a hosted vision model without changing challenge rules.
+
+## Sleep Challenge
+
+Submit a Garmin sleep screenshot and the values shown on it:
+
+```text
+/sleep-submit proof:<Garmin screenshot> total_sleep_minutes:466 sleep_date:YYYY-MM-DD sleep_start:23:28 sleep_end:07:15 deep_sleep_minutes:200 light_sleep_minutes:247 rem_sleep_minutes:19 awake_minutes:1
+```
+
+The public leaderboard uses a transparent `Challenge Sleep Score`: 60 points for total sleep duration (full points from 7-9 hours, tapering outside that range) and 40 points for consistency with the member's own prior sleep midpoint. During the first three nights without enough midpoint history, the duration component is normalized to a provisional 0-100 score. Four logged nights are required to qualify for the weekly leaderboard.
+
+`/sleep-insights` is private. After seven earlier stage-bearing screenshots, it compares Deep, REM, and Awake minutes with the member's own historical range. Garmin stage estimates are never compared between members, and the command is not medical advice. The bot records that proof was submitted but does not persist the sensitive screenshot URL.
 
 After a run is logged, the Discord reply includes a generated `Run Summary` PNG. The card uses `assets/run-summary/template.png`, fills the run date, run distance, remaining personal distance, remaining group distance, and rotates through bundled local incentive artwork.
 

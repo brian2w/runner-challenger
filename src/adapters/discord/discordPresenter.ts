@@ -5,6 +5,8 @@ import type {
   MonthCloseSummary,
   PunishmentRecord,
   NotificationIntent,
+  SleepInsights,
+  SleepLeaderboardRow,
 } from "../../core/types.js";
 
 function renderProgressBar(percent: number): string {
@@ -26,6 +28,10 @@ function renderProgressBar(percent: number): string {
   return `[${"🐐".repeat(goats)}${"🐦‍🔥".repeat(10 - goats)}]`;
 }
 
+function formatMinutes(minutes: number): string {
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function renderMonthName(month: string): string {
   const [year, monthNumber] = month.split("-").map(Number);
   return new Intl.DateTimeFormat("en-US", {
@@ -36,6 +42,39 @@ function renderMonthName(month: string): string {
 }
 
 export class DiscordPresenter {
+  renderSleepLeaderboard(rows: SleepLeaderboardRow[]): string {
+    const qualified = rows.filter((row) => row.qualifies);
+    const lines = qualified.length === 0
+      ? ["No one has logged four nights yet."]
+      : qualified.map((row) => `**#${row.rank} · ${row.displayName}**\n${row.averageScore}/100 average · ${row.nightsLogged} nights · ${row.streak}-night streak`);
+    return ["**Sleep Leaderboard · This Week**", "Qualifying requires 4 logged nights.", ...lines].join("\n\n");
+  }
+
+  renderSleepStatus(row: SleepLeaderboardRow): string {
+    const qualification = row.qualifies ? `Rank: #${row.rank}.` : `Log ${Math.max(0, 4 - row.nightsLogged)} more night(s) to qualify.`;
+    return `**Sleep status**\n${row.averageScore}/100 average · ${row.nightsLogged} nights · ${row.streak}-night streak\n${qualification}`;
+  }
+
+  renderSleepInsights(insights: SleepInsights): string {
+    if (!insights.latest) {
+      return "**Sleep insights**\nSubmit a Garmin sleep screenshot first.";
+    }
+    const latest = insights.latest;
+    const lines = [
+      "**Sleep insights**",
+      `Challenge score: ${insights.averageScore}/100 average`,
+      `Latest: ${formatMinutes(latest.totalSleepMinutes)} total sleep`,
+    ];
+    if (insights.baselineNights < insights.requiredBaselineNights) {
+      lines.push(`Keep submitting screenshots. Stage insights unlock after ${insights.requiredBaselineNights} earlier nights.`);
+    } else if (insights.stageInsights.length === 0) {
+      lines.push("Your Garmin screenshot did not include enough stage data for private stage insights yet.");
+    } else {
+      lines.push(...insights.stageInsights.map((insight) => `${insight.label}: ${formatMinutes(insight.latestMinutes)} latest · usual ${formatMinutes(insight.usualMinutes)} · ${insight.regularityScore}/100 regularity`));
+    }
+    lines.push("Garmin stage estimates are compared with your own history only and are not medical advice.");
+    return lines.join("\n");
+  }
   renderLeaderboard(month: string, leaderboard: LeaderboardRow[], group?: GroupProgressSummary): string {
     const lines = leaderboard.map(
       (row) => {

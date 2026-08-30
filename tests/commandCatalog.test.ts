@@ -9,6 +9,10 @@ describe("slashCommands", () => {
     deepEqual(commandNames, [
       "goal-set",
       "run-submit",
+      "sleep-submit",
+      "sleep-leaderboard",
+      "sleep-status",
+      "sleep-insights",
       "profile-set",
       "leaderboard",
       "status",
@@ -25,5 +29,7 @@ describe("slashCommands", () => {
 
     const removePunishment = slashCommands.find((command) => command.name === "leader-remove-punishment");
     equal(removePunishment?.options?.[0]?.type, "integer");
+    const sleepSubmit = slashCommands.find((command) => command.name === "sleep-submit");
+    equal(sleepSubmit?.options?.find((option) => option.name === "total_sleep_minutes")?.type, "integer");
   });
 });

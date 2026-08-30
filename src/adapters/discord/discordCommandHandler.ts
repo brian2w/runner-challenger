@@ -4,13 +4,19 @@ import type { MonthKey } from "../../core/types.js";
 import type { RunSummaryCardInput } from "../../cards/runSummaryCard.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
 import type { ChallengeService } from "../../services/challengeService.js";
+import type { SleepService } from "../../services/sleepService.js";
 import { DiscordPresenter } from "./discordPresenter.js";
+
+function formatMinutes(minutes: number): string {
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 export interface DiscordCommandInput {
   workspaceId: string;
   month: MonthKey;
   actorMemberId: string;
   isAdmin?: boolean;
+  currentDate?: string;
   commandName: string;
   options?: Record<string, string | number | undefined>;
 }
@@ -24,6 +30,7 @@ export class DiscordCommandHandler {
   constructor(
     private readonly service: ChallengeService,
     private readonly repository: ChallengeRepository,
+    private readonly sleepService?: SleepService,
     private readonly presenter = new DiscordPresenter(),
   ) {}
 
@@ -71,6 +78,50 @@ export class DiscordCommandHandler {
             userNote: this.optionalString(input.options, "note"),
           });
           return this.renderRunReceipt(input.workspaceId, submission);
+        }
+        case "sleep-submit": {
+          const sleepService = this.requireSleepService();
+          const submission = await sleepService.submitSleepProof({
+            workspaceId: input.workspaceId,
+            memberId: input.actorMemberId,
+            evidenceUrl: this.requireString(input.options, "proof"),
+            sleepDate: this.requireString(input.options, "sleep_date"),
+            totalSleepMinutes: this.requirePositiveInteger(input.options, "total_sleep_minutes"),
+            sleepStart: this.optionalString(input.options, "sleep_start"),
+            sleepEnd: this.optionalString(input.options, "sleep_end"),
+            deepSleepMinutes: this.optionalNonNegativeInteger(input.options, "deep_sleep_minutes"),
+            lightSleepMinutes: this.optionalNonNegativeInteger(input.options, "light_sleep_minutes"),
+            remSleepMinutes: this.optionalNonNegativeInteger(input.options, "rem_sleep_minutes"),
+            awakeMinutes: this.optionalNonNegativeInteger(input.options, "awake_minutes"),
+            latestAllowedDate: this.currentDate(input),
+          });
+          return { content: `Sleep logged: ${formatMinutes(submission.totalSleepMinutes)} for ${submission.sleepDate}. Use \`/sleep-insights\` for your private stage comparison.` };
+        }
+        case "sleep-leaderboard": {
+          const rows = await this.requireSleepService().getLeaderboard({
+            workspaceId: input.workspaceId,
+            asOfDate: this.currentDate(input),
+          });
+          return { content: this.presenter.renderSleepLeaderboard(rows) };
+        }
+        case "sleep-status": {
+          const rows = await this.requireSleepService().getLeaderboard({
+            workspaceId: input.workspaceId,
+            asOfDate: this.currentDate(input),
+          });
+          const row = rows.find((candidate) => candidate.memberId === input.actorMemberId);
+          if (!row) {
+            throw new DomainError("Sleep status was not found.");
+          }
+          return { content: this.presenter.renderSleepStatus(row) };
+        }
+        case "sleep-insights": {
+          const insights = await this.requireSleepService().getInsights({
+            workspaceId: input.workspaceId,
+            memberId: input.actorMemberId,
+            asOfDate: this.currentDate(input),
+          });
+          return { content: this.presenter.renderSleepInsights(insights) };
         }
         case "profile-set": {
           await this.service.setMemberProfileImage({
@@ -332,5 +383,30 @@ export class DiscordCommandHandler {
   private optionalNumber(options: Record<string, string | number | undefined> | undefined, key: string): number | undefined {
     const value = options?.[key];
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
+  private optionalNonNegativeInteger(
+    options: Record<string, string | number | undefined> | undefined,
+    key: string,
+  ): number | undefined {
+    const value = this.optionalNumber(options, key);
+    if (value === undefined) {
+      return undefined;
+    }
+    if (!Number.isInteger(value) || value < 0) {
+      throw new DomainError(`${key} must be a non-negative whole number.`);
+    }
+    return value;
+  }
+
+  private requireSleepService(): SleepService {
+    if (!this.sleepService) {
+      throw new DomainError("Sleep challenges are not configured.");
+    }
+    return this.sleepService;
+  }
+
+  private currentDate(input: DiscordCommandInput): string {
+    return input.currentDate ?? new Date().toISOString().slice(0, 10);
   }
 }

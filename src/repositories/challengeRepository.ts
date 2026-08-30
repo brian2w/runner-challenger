@@ -7,6 +7,7 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
+  SleepSubmission,
   NotificationIntent,
   Workspace,
 } from "../core/types.js";
@@ -34,6 +35,14 @@ export interface ChallengeRepository extends PlatformIdentityRepository {
   saveSubmission(submission: RunSubmission): Promise<void>;
   getSubmissionById(submissionId: string): Promise<RunSubmission | undefined>;
   listSubmissionsByChallenge(challengeId: string): Promise<RunSubmission[]>;
+
+  saveSleepSubmission(submission: SleepSubmission): Promise<void>;
+  getSleepSubmissionByMemberAndDate(
+    workspaceId: string,
+    memberId: string,
+    sleepDate: string,
+  ): Promise<SleepSubmission | undefined>;
+  listSleepSubmissionsByWorkspace(workspaceId: string): Promise<SleepSubmission[]>;
 
   saveCarryoverPenalty(penalty: CarryoverPenalty): Promise<void>;
   listCarryoversByTargetMonth(workspaceId: string, month: string): Promise<CarryoverPenalty[]>;

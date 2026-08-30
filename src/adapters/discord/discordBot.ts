@@ -21,6 +21,7 @@ import { renderRunSummaryCard } from "../../cards/runSummaryCard.js";
 import type { OcrProvider } from "../../ocr/ocrProvider.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
 import type { ChallengeService } from "../../services/challengeService.js";
+import { SleepService } from "../../services/sleepService.js";
 import { slashCommands, type SlashCommandDefinition, type SlashCommandOption } from "./commandCatalog.js";
 import { DiscordCommandHandler, type DiscordCommandResponse } from "./discordCommandHandler.js";
 import { PendingRunProofStore, type PendingRunProof } from "./pendingRunProofStore.js";
@@ -46,7 +47,7 @@ export class RunnerChallengeDiscordBot {
     private readonly repository: ChallengeRepository,
     private readonly ocrProvider?: OcrProvider,
   ) {
-    this.handler = new DiscordCommandHandler(service, repository);
+    this.handler = new DiscordCommandHandler(service, repository, new SleepService(repository));
   }
 
   async registerGuildCommands(): Promise<void> {
@@ -124,6 +125,7 @@ export class RunnerChallengeDiscordBot {
         month,
         actorMemberId: actor.id,
         isAdmin: this.isAdmin(interaction),
+        currentDate: this.currentDate(),
         commandName: interaction.commandName,
         options,
       });
@@ -132,6 +134,7 @@ export class RunnerChallengeDiscordBot {
         interaction,
         response.content,
         await this.responseExtras(interaction.commandName, actor, response),
+        interaction.commandName === "sleep-insights",
       );
     } catch (error) {
       const content = error instanceof Error ? `Error: ${error.message}` : "Error: unexpected failure.";
@@ -231,6 +234,8 @@ export class RunnerChallengeDiscordBot {
         return { distance_km: interaction.options.getNumber("distance_km", true) };
       case "run-submit":
         return this.runSubmitOptions(interaction, month);
+      case "sleep-submit":
+        return this.sleepSubmitOptions(interaction);
       case "profile-set":
         return { image_url: interaction.options.getString("image_url", true) };
       case "admin-start-month":
@@ -242,6 +247,9 @@ export class RunnerChallengeDiscordBot {
         return { member_id: member.id };
       }
       case "punishments":
+      case "sleep-leaderboard":
+      case "sleep-status":
+      case "sleep-insights":
         return {};
       case "admin-override-run":
         return {
@@ -285,6 +293,24 @@ export class RunnerChallengeDiscordBot {
       },
       this.ocrProvider,
     );
+  }
+
+  private sleepSubmitOptions(interaction: ChatInputCommandInteraction): Record<string, string | number | undefined> {
+    const proof = interaction.options.getAttachment("proof", true);
+    if (proof.contentType && !proof.contentType.startsWith("image/")) {
+      throw new DomainError("Proof must be an image screenshot.");
+    }
+    return {
+      proof: proof.url,
+      total_sleep_minutes: interaction.options.getInteger("total_sleep_minutes", true),
+      sleep_date: interaction.options.getString("sleep_date", true),
+      sleep_start: interaction.options.getString("sleep_start") ?? undefined,
+      sleep_end: interaction.options.getString("sleep_end") ?? undefined,
+      deep_sleep_minutes: interaction.options.getInteger("deep_sleep_minutes") ?? undefined,
+      light_sleep_minutes: interaction.options.getInteger("light_sleep_minutes") ?? undefined,
+      rem_sleep_minutes: interaction.options.getInteger("rem_sleep_minutes") ?? undefined,
+      awake_minutes: interaction.options.getInteger("awake_minutes") ?? undefined,
+    };
   }
 
   private shouldUseOcr(interaction: ChatInputCommandInteraction): boolean {
@@ -366,6 +392,7 @@ export class RunnerChallengeDiscordBot {
     interaction: ChatInputCommandInteraction,
     content: string,
     extras: Pick<InteractionReplyOptions, "embeds" | "files"> = {},
+    ephemeral = false,
   ): Promise<void> {
     if (interaction.deferred) {
       await interaction.editReply({ content, ...extras });
@@ -375,7 +402,7 @@ export class RunnerChallengeDiscordBot {
     await interaction.reply({
       content,
       ...extras,
-      ephemeral: content.startsWith("Error:"),
+      ephemeral: content.startsWith("Error:") || ephemeral,
     });
   }
 
