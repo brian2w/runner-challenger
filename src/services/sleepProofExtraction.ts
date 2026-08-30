@@ -36,7 +36,7 @@ function extractDurationAfterLabel(text: string, label: string): number | undefi
   const durationPattern = /(\d+)\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
   const index = lines.findIndex((line) => labelPattern.test(line));
   if (index < 0) return undefined;
-  const candidates = [lines[index] ?? "", lines[index - 1] ?? ""];
+  const candidates = [lines[index] ?? "", lines[index - 1] ?? "", lines[index + 1] ?? ""];
   const match = candidates.map((line) => durationPattern.exec(line)).find(Boolean);
   if (!match) {
     return undefined;
