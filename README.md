@@ -2,6 +2,8 @@
 
 Discord-first running challenge bot for the monthly group accountability MVP.
 
+For the architecture and agent-facing user-flow map, see [docs/CONTEXT.md](docs/CONTEXT.md) and [docs/USER_FLOWS.md](docs/USER_FLOWS.md).
+
 ## What It Does
 
 - Registers Discord slash commands for goal setting, screenshot-backed proof submissions, status, and leaderboard views.
