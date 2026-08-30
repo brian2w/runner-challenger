@@ -157,11 +157,10 @@ export class SleepService {
 
   async submitSleepProof(input: SleepInput): Promise<SleepSubmission> {
     const key = `${input.workspaceId}:${input.memberId}:${input.sleepDate}`;
-    const activeSubmission = this.submissionLocks.get(key);
-    if (activeSubmission) {
-      return activeSubmission;
-    }
-    const submission = this.submitSleepProofUnlocked(input);
+    const activeSubmission = this.submissionLocks.get(key) ?? Promise.resolve(undefined);
+    const submission = activeSubmission
+      .catch(() => undefined)
+      .then(() => this.submitSleepProofUnlocked(input));
     this.submissionLocks.set(key, submission);
     try {
       return await submission;
@@ -263,7 +262,12 @@ export class SleepService {
       .filter((record) => record.memberId === input.memberId && record.sleepDate <= input.asOfDate);
     const latest = records.at(-1);
     const baseline = latest ? records.filter((record) => record.sleepDate < latest.sleepDate).slice(-MAX_BASELINE_NIGHTS) : [];
-    const scores = records.map((record) => scoreSleep(record, records.filter((candidate) => candidate.sleepDate < record.sleepDate).slice(-MAX_BASELINE_NIGHTS)));
+    const start = weekStart(input.asOfDate);
+    const weeklyRecords = records.filter((record) => record.sleepDate >= start);
+    const scores = weeklyRecords.map((record) => scoreSleep(
+      record,
+      records.filter((candidate) => candidate.sleepDate < record.sleepDate).slice(-MAX_BASELINE_NIGHTS),
+    ));
     const stageInsights = latest ? [
       stageInsight("Deep", latest.deepSleepMinutes, baseline.flatMap((record) => record.deepSleepMinutes === undefined ? [] : [record.deepSleepMinutes])),
       stageInsight("REM", latest.remSleepMinutes, baseline.flatMap((record) => record.remSleepMinutes === undefined ? [] : [record.remSleepMinutes])),

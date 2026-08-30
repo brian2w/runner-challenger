@@ -55,6 +55,7 @@ describe("SleepService", () => {
 
   it("qualifies at four nights and ranks public scores without stage data", async () => {
     const { service } = await fixture();
+    await submit(service, "member-a", "2026-08-23", 270);
     for (const day of ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27"]) {
       await submit(service, "member-a", day, 480);
       await submit(service, "member-b", day, 390);
@@ -67,6 +68,8 @@ describe("SleepService", () => {
     equal(leaderboard[0]?.averageScore, 100);
     equal(leaderboard[1]?.qualifies, true);
     equal(leaderboard[1]?.averageScore, 82);
+    const insights = await service.getInsights({ workspaceId: "workspace-1", memberId: "member-a", asOfDate: "2026-08-27" });
+    equal(insights.averageScore, leaderboard[0]?.averageScore);
   });
 
   it("uses a midnight-safe baseline and the submitted sleep window midpoint", async () => {
@@ -87,10 +90,11 @@ describe("SleepService", () => {
     const { service, repository } = await fixture();
     const [first, second] = await Promise.all([
       submit(service, "member-a", "2026-08-31", 466),
-      submit(service, "member-a", "2026-08-31", 466),
+      submit(service, "member-a", "2026-08-31", 480),
     ]);
     equal(first.id, second.id);
     equal((await repository.listSleepSubmissionsByWorkspace("workspace-1")).length, 1);
+    equal((await repository.listSleepSubmissionsByWorkspace("workspace-1"))[0]?.totalSleepMinutes, 480);
   });
 
   it("unlocks private stage insights after seven earlier stage records", async () => {

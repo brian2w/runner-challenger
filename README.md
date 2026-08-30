@@ -78,7 +78,7 @@ The OCR boundary is provider-based so Tesseract can be replaced later with Paddl
 Submit a Garmin sleep screenshot and the values shown on it:
 
 ```text
-/sleep-submit proof:<Garmin screenshot> total_sleep_minutes:466 sleep_date:2026-08-31 sleep_start:23:28 sleep_end:07:15 deep_sleep_minutes:200 light_sleep_minutes:247 rem_sleep_minutes:19 awake_minutes:1
+/sleep-submit proof:<Garmin screenshot> total_sleep_minutes:466 sleep_date:YYYY-MM-DD sleep_start:23:28 sleep_end:07:15 deep_sleep_minutes:200 light_sleep_minutes:247 rem_sleep_minutes:19 awake_minutes:1
 ```
 
 The public leaderboard uses a transparent `Challenge Sleep Score`: 60 points for total sleep duration (full points from 7-9 hours, tapering outside that range) and 40 points for consistency with the member's own prior sleep midpoint. During the first three nights without enough midpoint history, the duration component is normalized to a provisional 0-100 score. Four logged nights are required to qualify for the weekly leaderboard.
