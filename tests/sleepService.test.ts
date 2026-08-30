@@ -130,4 +130,23 @@ describe("SleepService", () => {
     match(response.content, /Sleep logged: 7h 46m/);
     equal(response.content.includes("Deep"), false);
   });
+
+  it("combines a typed sleep value with an OCR suggestion", async () => {
+    const { service, repository } = await fixture();
+    const handler = new DiscordCommandHandler(new ChallengeService(repository), repository, service);
+    const response = await handler.handleDetailed({
+      workspaceId: "workspace-1",
+      month: "2026-08",
+      currentDate: "2026-08-31",
+      actorMemberId: "member-a",
+      commandName: "sleep-submit",
+      options: {
+        proof: "https://cdn.example/sleep.png",
+        total_sleep_minutes: 466,
+        ocr_sleep_date: "2026-08-31",
+      },
+    });
+    match(response.content, /I read 7h 46m for 2026-08-31/);
+    equal((await repository.listSleepSubmissionsByWorkspace("workspace-1")).length, 0);
+  });
 });

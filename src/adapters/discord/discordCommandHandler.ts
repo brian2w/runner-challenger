@@ -86,9 +86,11 @@ export class DiscordCommandHandler {
           if (totalSleepMinutes === undefined || !sleepDate) {
             const ocrTotal = this.optionalNumber(input.options, "ocr_total_sleep_minutes");
             const ocrDate = this.optionalString(input.options, "ocr_sleep_date");
-            if (ocrTotal !== undefined && ocrDate) {
+            const suggestedTotal = totalSleepMinutes ?? ocrTotal;
+            const suggestedDate = sleepDate ?? ocrDate;
+            if (suggestedTotal !== undefined && suggestedDate) {
               return {
-                content: `I read ${formatMinutes(ocrTotal)} for ${ocrDate}. Rerun /sleep-submit with total_sleep_minutes:${ocrTotal} sleep_date:${ocrDate}, or type the correct values if OCR misread it.`,
+                content: `I read ${formatMinutes(suggestedTotal)} for ${suggestedDate}. Rerun /sleep-submit with total_sleep_minutes:${suggestedTotal} sleep_date:${suggestedDate}, or type the correct values if OCR misread it.`,
               };
             }
             throw new DomainError("Add total_sleep_minutes and sleep_date, or upload a clearer Garmin sleep screenshot so OCR can read them.");
