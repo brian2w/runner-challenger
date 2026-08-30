@@ -11,3 +11,4 @@ export type {
 } from "../application/platformIdentityRepository.js";
 export type { ChallengeRepository } from "../repositories/challengeRepository.js";
 export { ChallengeService } from "../services/challengeService.js";
+export { SleepService } from "../services/sleepService.js";

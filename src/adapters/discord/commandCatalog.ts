@@ -30,6 +30,33 @@ export const slashCommands: SlashCommandDefinition[] = [
     ],
   },
   {
+    name: "sleep-submit",
+    description: "Log Garmin sleep with screenshot proof and total sleep in minutes.",
+    options: [
+      { name: "proof", description: "Garmin sleep screenshot.", type: "attachment", required: true },
+      { name: "total_sleep_minutes", description: "Total sleep shown by Garmin, in minutes.", type: "integer", required: true },
+      { name: "sleep_date", description: "Wake date in YYYY-MM-DD.", type: "string", required: true },
+      { name: "sleep_start", description: "Optional start time in 24-hour HH:MM.", type: "string", required: false },
+      { name: "sleep_end", description: "Optional end time in 24-hour HH:MM.", type: "string", required: false },
+      { name: "deep_sleep_minutes", description: "Optional Deep sleep minutes.", type: "integer", required: false },
+      { name: "light_sleep_minutes", description: "Optional Light sleep minutes.", type: "integer", required: false },
+      { name: "rem_sleep_minutes", description: "Optional REM sleep minutes.", type: "integer", required: false },
+      { name: "awake_minutes", description: "Optional Awake minutes.", type: "integer", required: false },
+    ],
+  },
+  {
+    name: "sleep-leaderboard",
+    description: "Show this week's qualifying sleep challenge standings.",
+  },
+  {
+    name: "sleep-status",
+    description: "Show your current sleep challenge score and streak.",
+  },
+  {
+    name: "sleep-insights",
+    description: "Privately compare your Garmin stage estimates with your own history.",
+  },
+  {
     name: "profile-set",
     description: "Set a custom profile image URL for status and future leaderboard cards.",
     options: [{ name: "image_url", description: "Public http or https image URL.", type: "string", required: true }],

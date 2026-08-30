@@ -7,6 +7,7 @@ import type {
   MonthlyResult,
   PunishmentRecord,
   RunSubmission,
+  SleepSubmission,
   NotificationIntent,
   Workspace,
 } from "../core/types.js";
@@ -22,6 +23,7 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
   protected readonly leaderAssignments = new Map<string, LeaderAssignment>();
   protected readonly goals = new Map<string, MonthlyGoal>();
   protected readonly submissions = new Map<string, RunSubmission>();
+  protected readonly sleepSubmissions = new Map<string, SleepSubmission>();
   protected readonly carryovers = new Map<string, CarryoverPenalty>();
   protected readonly results = new Map<string, MonthlyResult>();
   protected readonly punishments = new Map<string, PunishmentRecord>();
@@ -98,6 +100,29 @@ export class InMemoryChallengeRepository implements ChallengeRepository {
 
   async listSubmissionsByChallenge(challengeId: string): Promise<RunSubmission[]> {
     return [...this.submissions.values()].filter((submission) => submission.challengeId === challengeId);
+  }
+
+  async saveSleepSubmission(submission: SleepSubmission): Promise<void> {
+    this.sleepSubmissions.set(submission.id, submission);
+  }
+
+  async getSleepSubmissionByMemberAndDate(
+    workspaceId: string,
+    memberId: string,
+    sleepDate: string,
+  ): Promise<SleepSubmission | undefined> {
+    return [...this.sleepSubmissions.values()].find(
+      (submission) =>
+        submission.workspaceId === workspaceId &&
+        submission.memberId === memberId &&
+        submission.sleepDate === sleepDate,
+    );
+  }
+
+  async listSleepSubmissionsByWorkspace(workspaceId: string): Promise<SleepSubmission[]> {
+    return [...this.sleepSubmissions.values()]
+      .filter((submission) => submission.workspaceId === workspaceId)
+      .sort((left, right) => left.sleepDate.localeCompare(right.sleepDate));
   }
 
   async saveCarryoverPenalty(penalty: CarryoverPenalty): Promise<void> {
