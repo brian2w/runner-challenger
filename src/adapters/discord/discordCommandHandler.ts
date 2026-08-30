@@ -81,12 +81,24 @@ export class DiscordCommandHandler {
         }
         case "sleep-submit": {
           const sleepService = this.requireSleepService();
+          const totalSleepMinutes = this.optionalNumber(input.options, "total_sleep_minutes");
+          const sleepDate = this.optionalString(input.options, "sleep_date");
+          if (totalSleepMinutes === undefined || !sleepDate) {
+            const ocrTotal = this.optionalNumber(input.options, "ocr_total_sleep_minutes");
+            const ocrDate = this.optionalString(input.options, "ocr_sleep_date");
+            if (ocrTotal !== undefined && ocrDate) {
+              return {
+                content: `I read ${formatMinutes(ocrTotal)} for ${ocrDate}. Rerun /sleep-submit with total_sleep_minutes:${ocrTotal} sleep_date:${ocrDate}, or type the correct values if OCR misread it.`,
+              };
+            }
+            throw new DomainError("Add total_sleep_minutes and sleep_date, or upload a clearer Garmin sleep screenshot so OCR can read them.");
+          }
           const submission = await sleepService.submitSleepProof({
             workspaceId: input.workspaceId,
             memberId: input.actorMemberId,
             evidenceUrl: this.requireString(input.options, "proof"),
-            sleepDate: this.requireString(input.options, "sleep_date"),
-            totalSleepMinutes: this.requirePositiveInteger(input.options, "total_sleep_minutes"),
+            sleepDate,
+            totalSleepMinutes: this.requirePositiveInteger({ total_sleep_minutes: totalSleepMinutes }, "total_sleep_minutes"),
             sleepStart: this.optionalString(input.options, "sleep_start"),
             sleepEnd: this.optionalString(input.options, "sleep_end"),
             deepSleepMinutes: this.optionalNonNegativeInteger(input.options, "deep_sleep_minutes"),
