@@ -27,6 +27,7 @@ import { DiscordCommandHandler, type DiscordCommandResponse } from "./discordCom
 import { PendingRunProofStore, type PendingRunProof } from "./pendingRunProofStore.js";
 import { buildRunProofConfirmationDraft } from "./runProofConfirmation.js";
 import { resolveRunSubmitOptions } from "./runSubmitOptions.js";
+import { resolveSleepSubmitOptions } from "./sleepSubmitOptions.js";
 
 export interface DiscordBotConfig {
   token: string;
@@ -295,29 +296,32 @@ export class RunnerChallengeDiscordBot {
     );
   }
 
-  private sleepSubmitOptions(interaction: ChatInputCommandInteraction): Record<string, string | number | undefined> {
+  private async sleepSubmitOptions(interaction: ChatInputCommandInteraction): Promise<Record<string, string | number | undefined>> {
     const proof = interaction.options.getAttachment("proof", true);
     if (proof.contentType && !proof.contentType.startsWith("image/")) {
       throw new DomainError("Proof must be an image screenshot.");
     }
-    return {
-      proof: proof.url,
-      total_sleep_minutes: interaction.options.getInteger("total_sleep_minutes", true),
-      sleep_date: interaction.options.getString("sleep_date", true),
-      sleep_start: interaction.options.getString("sleep_start") ?? undefined,
-      sleep_end: interaction.options.getString("sleep_end") ?? undefined,
-      deep_sleep_minutes: interaction.options.getInteger("deep_sleep_minutes") ?? undefined,
-      light_sleep_minutes: interaction.options.getInteger("light_sleep_minutes") ?? undefined,
-      rem_sleep_minutes: interaction.options.getInteger("rem_sleep_minutes") ?? undefined,
-      awake_minutes: interaction.options.getInteger("awake_minutes") ?? undefined,
-    };
+    return resolveSleepSubmitOptions({
+      proofUrl: proof.url,
+      totalSleepMinutes: interaction.options.getInteger("total_sleep_minutes") ?? undefined,
+      sleepDate: interaction.options.getString("sleep_date") ?? undefined,
+      sleepStart: interaction.options.getString("sleep_start") ?? undefined,
+      sleepEnd: interaction.options.getString("sleep_end") ?? undefined,
+      deepSleepMinutes: interaction.options.getInteger("deep_sleep_minutes") ?? undefined,
+      lightSleepMinutes: interaction.options.getInteger("light_sleep_minutes") ?? undefined,
+      remSleepMinutes: interaction.options.getInteger("rem_sleep_minutes") ?? undefined,
+      awakeMinutes: interaction.options.getInteger("awake_minutes") ?? undefined,
+      fallbackDate: this.currentDate(),
+    }, this.ocrProvider);
   }
 
   private shouldUseOcr(interaction: ChatInputCommandInteraction): boolean {
     return (
-      interaction.commandName === "run-submit" &&
+      (interaction.commandName === "run-submit" || interaction.commandName === "sleep-submit") &&
       Boolean(this.ocrProvider) &&
-      (interaction.options.getNumber("distance_km") === null || interaction.options.getString("run_date") === null)
+      (interaction.commandName === "run-submit"
+        ? interaction.options.getNumber("distance_km") === null || interaction.options.getString("run_date") === null
+        : interaction.options.getInteger("total_sleep_minutes") === null || interaction.options.getString("sleep_date") === null)
     );
   }
 
