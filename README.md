@@ -87,7 +87,7 @@ The public leaderboard uses a transparent `Challenge Sleep Score`: 60 points for
 
 `/sleep-insights` is private. After seven earlier stage-bearing screenshots, it compares Deep, REM, and Awake minutes with the member's own historical range. Garmin stage estimates are never compared between members, and the command is not medical advice. The bot records that proof was submitted but does not persist the sensitive screenshot URL.
 
-If `total_sleep_minutes` or `sleep_date` is omitted, OCR reads the Garmin screenshot's stable summary labels and returns suggested values. Rerun the command with the confirmed values before the record is saved.
+If `total_sleep_minutes` or `sleep_date` is omitted, OCR reads Garmin's stable Total Sleep and Sleep Score Duration layouts and returns suggested values. Rerun the command with the confirmed values before the record is saved.
 
 After a run is logged, the Discord reply includes a generated `Run Summary` PNG. The card uses `assets/run-summary/template.png`, fills the run date, run distance, remaining personal distance, remaining group distance, and rotates through bundled local incentive artwork.
 

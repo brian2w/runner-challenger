@@ -13,39 +13,43 @@ export interface SleepProofExtractionOptions {
   fallbackDate?: string;
 }
 
+const SLEEP_DURATION_LABELS = ["total sleep", "duration"];
+
 export function extractSleepProofFields(
   ocrText: string,
   options: SleepProofExtractionOptions = {},
 ): ExtractedSleepProofFields {
   const fields: ExtractedSleepProofFields = {
-    totalSleepMinutes: extractDurationAfterLabel(ocrText, "total sleep"),
+    totalSleepMinutes: extractDurationNearLabels(ocrText, SLEEP_DURATION_LABELS),
     sleepDate: extractSleepDate(ocrText, options.fallbackDate),
     sleepStart: extractTimeAfterBoundary(ocrText, /sleep timeline/i),
     sleepEnd: extractLastTime(ocrText),
-    deepSleepMinutes: extractDurationAfterLabel(ocrText, "deep"),
-    lightSleepMinutes: extractDurationAfterLabel(ocrText, "light"),
-    remSleepMinutes: extractDurationAfterLabel(ocrText, "rem"),
-    awakeMinutes: extractDurationAfterLabel(ocrText, "awake"),
+    deepSleepMinutes: extractDurationNearLabels(ocrText, ["deep"]),
+    lightSleepMinutes: extractDurationNearLabels(ocrText, ["light"]),
+    remSleepMinutes: extractDurationNearLabels(ocrText, ["rem"]),
+    awakeMinutes: extractDurationNearLabels(ocrText, ["awake"]),
   };
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as ExtractedSleepProofFields;
 }
 
-function extractDurationAfterLabel(text: string, label: string): number | undefined {
+function extractDurationNearLabels(text: string, labels: readonly string[]): number | undefined {
   const lines = text.split(/\r?\n/);
-  const labelPattern = new RegExp(`\\b${label}\\b`, "i");
   const durationPattern = /(\d+)\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
-  const index = lines.findIndex((line) => labelPattern.test(line));
-  if (index < 0) return undefined;
-  const candidates = [lines[index] ?? "", lines[index - 1] ?? "", lines[index + 1] ?? ""];
-  const match = candidates.map((line) => durationPattern.exec(line)).find(Boolean);
-  if (!match) {
-    return undefined;
+  for (const label of labels) {
+    const labelPattern = new RegExp(`\\b${label}\\b`, "i");
+    const index = lines.findIndex((line) => labelPattern.test(line));
+    if (index < 0) continue;
+    const candidates = [lines[index] ?? "", lines[index - 1] ?? "", lines[index + 1] ?? ""];
+    const match = candidates.map((line) => durationPattern.exec(line)).find(Boolean);
+    if (match) {
+      const hours = Number(match[1] ?? 0);
+      const minutes = Number(match[2] ?? match[3] ?? 0);
+      if (Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && minutes >= 0 && minutes < 60) {
+        return hours * 60 + minutes;
+      }
+    }
   }
-  const hours = Number(match[1] ?? 0);
-  const minutes = Number(match[2] ?? match[3] ?? 0);
-  return Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && minutes >= 0 && minutes < 60
-    ? hours * 60 + minutes
-    : undefined;
+  return undefined;
 }
 
 function extractSleepDate(text: string, fallbackDate?: string): string | undefined {
