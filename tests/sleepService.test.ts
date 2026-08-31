@@ -149,4 +149,23 @@ describe("SleepService", () => {
     match(response.content, /I read 7h 46m for 2026-08-31/);
     equal((await repository.listSleepSubmissionsByWorkspace("workspace-1")).length, 0);
   });
+
+  it("shows a partial OCR sleep value without saving", async () => {
+    const { service, repository } = await fixture();
+    const handler = new DiscordCommandHandler(new ChallengeService(repository), repository, service);
+    const response = await handler.handleDetailed({
+      workspaceId: "workspace-1",
+      month: "2026-08",
+      currentDate: "2026-08-31",
+      actorMemberId: "member-a",
+      commandName: "sleep-submit",
+      options: {
+        proof: "https://cdn.example/sleep-score.png",
+        ocr_total_sleep_minutes: 504,
+      },
+    });
+    match(response.content, /I read 8h 24m, but could not determine the wake date/);
+    match(response.content, /total_sleep_minutes:504/);
+    equal((await repository.listSleepSubmissionsByWorkspace("workspace-1")).length, 0);
+  });
 });

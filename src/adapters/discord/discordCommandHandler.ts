@@ -93,6 +93,16 @@ export class DiscordCommandHandler {
                 content: `I read ${formatMinutes(suggestedTotal)} for ${suggestedDate}. Rerun /sleep-submit with total_sleep_minutes:${suggestedTotal} sleep_date:${suggestedDate}, or type the correct values if OCR misread it.`,
               };
             }
+            if (suggestedTotal !== undefined) {
+              return {
+                content: `I read ${formatMinutes(suggestedTotal)}, but could not determine the wake date. Rerun /sleep-submit with total_sleep_minutes:${suggestedTotal} and sleep_date:YYYY-MM-DD.`,
+              };
+            }
+            if (suggestedDate) {
+              return {
+                content: `I read ${suggestedDate}, but could not determine total sleep. Rerun /sleep-submit with total_sleep_minutes:<minutes> sleep_date:${suggestedDate}.`,
+              };
+            }
             throw new DomainError("Add total_sleep_minutes and sleep_date, or upload a clearer Garmin sleep screenshot so OCR can read them.");
           }
           const submission = await sleepService.submitSleepProof({

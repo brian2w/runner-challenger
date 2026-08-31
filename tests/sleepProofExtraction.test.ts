@@ -22,6 +22,29 @@ describe("extractSleepProofFields", () => {
     );
   });
 
+  it("extracts Garmin Sleep Score duration layouts", () => {
+    deepEqual(
+      extractSleepProofFields(
+        "Sleep Score\nToday\n91\nExcellent\n8h 24m\nDuration\nOptimal sleep stages",
+        { fallbackDate: "2026-09-01" },
+      ),
+      {
+        totalSleepMinutes: 504,
+        sleepDate: "2026-09-01",
+      },
+    );
+  });
+
+  it("extracts a Garmin duration when OCR keeps its label and value on one line", () => {
+    deepEqual(
+      extractSleepProofFields("Sleep Score\nYesterday\nDuration 7h 30m", { fallbackDate: "2026-09-01" }),
+      {
+        totalSleepMinutes: 450,
+        sleepDate: "2026-08-31",
+      },
+    );
+  });
+
   it("does not invent fields when labels are absent", () => {
     deepEqual(extractSleepProofFields("Garmin Sleep\nToday", { fallbackDate: "2026-08-31" }), {
       sleepDate: "2026-08-31",
