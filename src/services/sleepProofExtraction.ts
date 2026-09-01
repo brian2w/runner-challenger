@@ -13,17 +13,27 @@ export interface SleepProofExtractionOptions {
   fallbackDate?: string;
 }
 
+interface DurationExtractionOptions {
+  allowsTesseractEightAlias?: boolean;
+  includesNearestNonEmptyLine?: boolean;
+}
+
 const SLEEP_DURATION_LABELS = ["total sleep", "duration"];
+const DURATION_PATTERN = /(\d+|[Ss])\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
 
 export function extractSleepProofFields(
   ocrText: string,
   options: SleepProofExtractionOptions = {},
 ): ExtractedSleepProofFields {
+  const totalSleepMinutes = extractDurationNearLabels(ocrText, SLEEP_DURATION_LABELS, {
+    allowsTesseractEightAlias: true,
+    includesNearestNonEmptyLine: true,
+  });
+  const timeline = extractSleepTimeline(ocrText, totalSleepMinutes);
   const fields: ExtractedSleepProofFields = {
-    totalSleepMinutes: extractDurationNearLabels(ocrText, SLEEP_DURATION_LABELS),
+    totalSleepMinutes,
     sleepDate: extractSleepDate(ocrText, options.fallbackDate),
-    sleepStart: extractTimeAfterBoundary(ocrText, /sleep timeline/i),
-    sleepEnd: extractLastTime(ocrText),
+    ...timeline,
     deepSleepMinutes: extractDurationNearLabels(ocrText, ["deep"]),
     lightSleepMinutes: extractDurationNearLabels(ocrText, ["light"]),
     remSleepMinutes: extractDurationNearLabels(ocrText, ["rem"]),
@@ -32,17 +42,20 @@ export function extractSleepProofFields(
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as ExtractedSleepProofFields;
 }
 
-function extractDurationNearLabels(text: string, labels: readonly string[]): number | undefined {
+function extractDurationNearLabels(
+  text: string,
+  labels: readonly string[],
+  options: DurationExtractionOptions = {},
+): number | undefined {
   const lines = text.split(/\r?\n/);
-  const durationPattern = /([\dSs])\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
   for (const label of labels) {
     const labelPattern = new RegExp(`\\b${label}\\b`, "i");
     const index = lines.findIndex((line) => labelPattern.test(line));
     if (index < 0) continue;
-    const candidates = [lines[index] ?? "", lines[index - 1] ?? "", lines[index + 1] ?? ""];
-    const match = candidates.map((line) => durationPattern.exec(line)).find(Boolean);
+    const candidates = options.includesNearestNonEmptyLine ? nearbyNonEmptyLines(lines, index) : [lines[index] ?? ""];
+    const match = candidates.map((line) => DURATION_PATTERN.exec(line)).find(Boolean);
     if (match) {
-      const hours = parseOcrHours(match[1]);
+      const hours = parseHours(match[1], options.allowsTesseractEightAlias ?? false);
       const minutes = Number(match[2] ?? match[3] ?? 0);
       if (hours !== undefined && Number.isInteger(minutes) && hours >= 0 && minutes >= 0 && minutes < 60) {
         return hours * 60 + minutes;
@@ -52,9 +65,23 @@ function extractDurationNearLabels(text: string, labels: readonly string[]): num
   return undefined;
 }
 
-function parseOcrHours(value: string | undefined): number | undefined {
+function nearbyNonEmptyLines(lines: string[], index: number): string[] {
+  const candidates = [lines[index] ?? ""];
+  for (const step of [-1, 1]) {
+    for (let candidateIndex = index + step; candidateIndex >= 0 && candidateIndex < lines.length; candidateIndex += step) {
+      const candidate = lines[candidateIndex]?.trim();
+      if (candidate) {
+        candidates.push(candidate);
+        break;
+      }
+    }
+  }
+  return candidates;
+}
+
+function parseHours(value: string | undefined, allowsTesseractEightAlias: boolean): number | undefined {
   if (!value) return 0;
-  if (/^s$/i.test(value)) return 8;
+  if (/^s$/i.test(value)) return allowsTesseractEightAlias ? 8 : undefined;
   const hours = Number(value);
   return Number.isInteger(hours) ? hours : undefined;
 }
@@ -73,20 +100,34 @@ function extractSleepDate(text: string, fallbackDate?: string): string | undefin
   return undefined;
 }
 
-function extractTimeAfterBoundary(text: string, boundary: RegExp): string | undefined {
-  const section = text.split(boundary)[1];
-  return section ? extractFirstTime(section) : undefined;
+function extractSleepTimeline(text: string, totalSleepMinutes?: number): Pick<ExtractedSleepProofFields, "sleepStart" | "sleepEnd"> {
+  const section = text.split(/sleep timeline/i)[1];
+  if (!section) return {};
+  const times = [...section.matchAll(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/gi)]
+    .map((match) => normalizeTime(Number(match[1]), Number(match[2]), match[3]))
+    .filter((time): time is string => time !== undefined);
+  const first = times[0];
+  const last = times.at(-1);
+  if (!first || !last || first === last) return {};
+  if (totalSleepMinutes === undefined) {
+    return { sleepStart: first, sleepEnd: last };
+  }
+  const inOcrOrder = sleepWindowDuration(first, last);
+  const reversed = sleepWindowDuration(last, first);
+  return Math.abs(inOcrOrder - totalSleepMinutes) <= Math.abs(reversed - totalSleepMinutes)
+    ? { sleepStart: first, sleepEnd: last }
+    : { sleepStart: last, sleepEnd: first };
 }
 
-function extractFirstTime(text: string): string | undefined {
-  const match = /\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/i.exec(text);
-  return match ? normalizeTime(Number(match[1]), Number(match[2]), match[3]) : undefined;
+function sleepWindowDuration(start: string, end: string): number {
+  const startMinutes = timeToMinutes(start);
+  const endMinutes = timeToMinutes(end);
+  return endMinutes > startMinutes ? endMinutes - startMinutes : endMinutes + 24 * 60 - startMinutes;
 }
 
-function extractLastTime(text: string): string | undefined {
-  const matches = [...text.matchAll(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/gi)];
-  const match = matches.at(-1);
-  return match ? normalizeTime(Number(match[1]), Number(match[2]), match[3]) : undefined;
+function timeToMinutes(time: string): number {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
 }
 
 function normalizeTime(hour: number, minute: number, meridiem?: string): string | undefined {
