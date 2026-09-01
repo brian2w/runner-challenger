@@ -34,7 +34,7 @@ export function extractSleepProofFields(
 
 function extractDurationNearLabels(text: string, labels: readonly string[]): number | undefined {
   const lines = text.split(/\r?\n/);
-  const durationPattern = /(\d+)\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
+  const durationPattern = /([\dSs])\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
   for (const label of labels) {
     const labelPattern = new RegExp(`\\b${label}\\b`, "i");
     const index = lines.findIndex((line) => labelPattern.test(line));
@@ -42,14 +42,21 @@ function extractDurationNearLabels(text: string, labels: readonly string[]): num
     const candidates = [lines[index] ?? "", lines[index - 1] ?? "", lines[index + 1] ?? ""];
     const match = candidates.map((line) => durationPattern.exec(line)).find(Boolean);
     if (match) {
-      const hours = Number(match[1] ?? 0);
+      const hours = parseOcrHours(match[1]);
       const minutes = Number(match[2] ?? match[3] ?? 0);
-      if (Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && minutes >= 0 && minutes < 60) {
+      if (hours !== undefined && Number.isInteger(minutes) && hours >= 0 && minutes >= 0 && minutes < 60) {
         return hours * 60 + minutes;
       }
     }
   }
   return undefined;
+}
+
+function parseOcrHours(value: string | undefined): number | undefined {
+  if (!value) return 0;
+  if (/^s$/i.test(value)) return 8;
+  const hours = Number(value);
+  return Number.isInteger(hours) ? hours : undefined;
 }
 
 function extractSleepDate(text: string, fallbackDate?: string): string | undefined {

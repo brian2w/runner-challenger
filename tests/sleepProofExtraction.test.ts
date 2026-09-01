@@ -45,6 +45,16 @@ describe("extractSleepProofFields", () => {
     );
   });
 
+  it("handles Tesseract reading the large Garmin 8 as S", () => {
+    deepEqual(
+      extractSleepProofFields("Today\nSh 21m\nTotal Sleep", { fallbackDate: "2026-09-02" }),
+      {
+        totalSleepMinutes: 501,
+        sleepDate: "2026-09-02",
+      },
+    );
+  });
+
   it("does not invent fields when labels are absent", () => {
     deepEqual(extractSleepProofFields("Garmin Sleep\nToday", { fallbackDate: "2026-08-31" }), {
       sleepDate: "2026-08-31",
