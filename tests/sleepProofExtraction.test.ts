@@ -79,6 +79,19 @@ describe("extractSleepProofFields", () => {
     );
   });
 
+  it("extracts Garmin's paired two-column stage rows", () => {
+    deepEqual(
+      extractSleepProofFields("8h 21m\nTotal Sleep\n2h 47m 4h 43m\nDeep Light\n51m Im\nREM Awake"),
+      {
+        totalSleepMinutes: 501,
+        deepSleepMinutes: 167,
+        lightSleepMinutes: 283,
+        remSleepMinutes: 51,
+        awakeMinutes: 1,
+      },
+    );
+  });
+
   it("keeps multi-digit total sleep durations intact", () => {
     deepEqual(
       extractSleepProofFields("Today\n10h 15m\nTotal Sleep", { fallbackDate: "2026-09-02" }),

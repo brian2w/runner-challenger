@@ -20,6 +20,12 @@ interface DurationExtractionOptions {
 
 const SLEEP_DURATION_LABELS = ["total sleep", "duration"];
 const DURATION_PATTERN = /(\d+|[Ss])\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|(?:(\d+)\s*m(?:in(?:utes?)?)?)/i;
+const STAGE_FIELD_BY_LABEL = {
+  deep: "deepSleepMinutes",
+  light: "lightSleepMinutes",
+  rem: "remSleepMinutes",
+  awake: "awakeMinutes",
+} as const;
 
 export function extractSleepProofFields(
   ocrText: string,
@@ -30,14 +36,15 @@ export function extractSleepProofFields(
     includesNearestNonEmptyLine: true,
   });
   const timeline = extractSleepTimeline(ocrText, totalSleepMinutes);
+  const stages = extractStageRows(ocrText);
   const fields: ExtractedSleepProofFields = {
     totalSleepMinutes,
     sleepDate: extractSleepDate(ocrText, options.fallbackDate),
     ...timeline,
-    deepSleepMinutes: extractDurationNearLabels(ocrText, ["deep"]),
-    lightSleepMinutes: extractDurationNearLabels(ocrText, ["light"]),
-    remSleepMinutes: extractDurationNearLabels(ocrText, ["rem"]),
-    awakeMinutes: extractDurationNearLabels(ocrText, ["awake"]),
+    deepSleepMinutes: extractDurationNearLabels(ocrText, ["deep"]) ?? stages.deepSleepMinutes,
+    lightSleepMinutes: extractDurationNearLabels(ocrText, ["light"]) ?? stages.lightSleepMinutes,
+    remSleepMinutes: extractDurationNearLabels(ocrText, ["rem"]) ?? stages.remSleepMinutes,
+    awakeMinutes: extractDurationNearLabels(ocrText, ["awake"]) ?? stages.awakeMinutes,
   };
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as ExtractedSleepProofFields;
 }
@@ -77,6 +84,44 @@ function nearbyNonEmptyLines(lines: string[], index: number): string[] {
     }
   }
   return candidates;
+}
+
+function extractStageRows(text: string): Pick<
+  ExtractedSleepProofFields,
+  "deepSleepMinutes" | "lightSleepMinutes" | "remSleepMinutes" | "awakeMinutes"
+> {
+  const fields: Pick<ExtractedSleepProofFields, "deepSleepMinutes" | "lightSleepMinutes" | "remSleepMinutes" | "awakeMinutes"> = {};
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const minutes = extractDurationTokens(lines[index] ?? "");
+    const labels = extractStageLabels(lines[index + 1] ?? "");
+    if (minutes.length < 2 || minutes.length !== labels.length) continue;
+    labels.forEach((label, labelIndex) => {
+      const minutesValue = minutes[labelIndex];
+      if (minutesValue !== undefined) fields[label] = minutesValue;
+    });
+  }
+  return fields;
+}
+
+function extractDurationTokens(text: string): number[] {
+  const tokens = [...text.matchAll(/(\d+)\s*h(?:ours?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?|([\d]+|[Il])\s*m(?:in(?:utes?)?)?/gi)];
+  return tokens
+    .map((match) => {
+      const hours = Number(match[1] ?? 0);
+      const minuteText = match[2] ?? match[3] ?? "0";
+      const minutes = /^[Il]$/i.test(minuteText) ? 1 : Number(minuteText);
+      return Number.isInteger(hours) && Number.isInteger(minutes) && minutes >= 0 && minutes < 60 ? hours * 60 + minutes : undefined;
+    })
+    .filter((minutes): minutes is number => minutes !== undefined);
+}
+
+function extractStageLabels(text: string): Array<(typeof STAGE_FIELD_BY_LABEL)[keyof typeof STAGE_FIELD_BY_LABEL]> {
+  const labels = [...text.matchAll(/\b(deep|light|rem|awake)\b/gi)];
+  return labels.flatMap((label) => {
+    const field = STAGE_FIELD_BY_LABEL[label[1]?.toLowerCase() as keyof typeof STAGE_FIELD_BY_LABEL];
+    return field ? [field] : [];
+  });
 }
 
 function parseHours(value: string | undefined, allowsTesseractEightAlias: boolean): number | undefined {

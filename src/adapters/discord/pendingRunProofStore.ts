@@ -1,43 +1,46 @@
 import { randomUUID } from "node:crypto";
 import type { MonthKey } from "../../core/types.js";
 
-export interface PendingRunProof {
+export interface PendingProof {
   id: string;
   workspaceId: string;
-  month: MonthKey;
   actorMemberId: string;
+  createdAtMs: number;
+}
+
+export interface PendingRunProof extends PendingProof {
+  month: MonthKey;
   proofUrl: string;
   distanceKm: number;
   runDate: string;
   source?: string;
   note?: string;
-  createdAtMs: number;
 }
 
-export type PendingRunProofClaimResult =
-  | { status: "claimed"; draft: PendingRunProof }
-  | { status: "forbidden"; draft: PendingRunProof }
+export type PendingProofClaimResult<T extends PendingProof> =
+  | { status: "claimed"; draft: T }
+  | { status: "forbidden"; draft: T }
   | { status: "handled" }
   | { status: "missing" };
 
-export class PendingRunProofStore {
-  private readonly pending = new Map<string, PendingRunProof>();
+export class PendingProofStore<T extends PendingProof> {
+  private readonly pending = new Map<string, T>();
   private readonly handled = new Map<string, number>();
 
   constructor(private readonly ttlMs = 10 * 60 * 1000) {}
 
-  create(input: Omit<PendingRunProof, "id" | "createdAtMs">, nowMs = Date.now()): PendingRunProof {
+  create(input: Omit<T, "id" | "createdAtMs">, nowMs = Date.now()): T {
     this.prune(nowMs);
-    const draft: PendingRunProof = {
+    const draft = {
       ...input,
       id: randomUUID(),
       createdAtMs: nowMs,
-    };
+    } as T;
     this.pending.set(draft.id, draft);
     return draft;
   }
 
-  take(id: string, nowMs = Date.now()): PendingRunProof | undefined {
+  take(id: string, nowMs = Date.now()): T | undefined {
     this.prune(nowMs);
     const draft = this.pending.get(id);
     if (!draft) {
@@ -49,7 +52,7 @@ export class PendingRunProofStore {
     return draft;
   }
 
-  get(id: string, nowMs = Date.now()): PendingRunProof | undefined {
+  get(id: string, nowMs = Date.now()): T | undefined {
     this.prune(nowMs);
     return this.pending.get(id);
   }
@@ -60,9 +63,9 @@ export class PendingRunProofStore {
 
   claim(
     id: string,
-    canClaim: (draft: PendingRunProof) => boolean,
+    canClaim: (draft: T) => boolean,
     nowMs = Date.now(),
-  ): PendingRunProofClaimResult {
+  ): PendingProofClaimResult<T> {
     this.prune(nowMs);
     const draft = this.pending.get(id);
     if (!draft) {
@@ -93,3 +96,5 @@ export class PendingRunProofStore {
     }
   }
 }
+
+export class PendingRunProofStore extends PendingProofStore<PendingRunProof> {}

@@ -24,10 +24,45 @@ import type { ChallengeService } from "../../services/challengeService.js";
 import { SleepService } from "../../services/sleepService.js";
 import { slashCommands, type SlashCommandDefinition, type SlashCommandOption } from "./commandCatalog.js";
 import { DiscordCommandHandler, type DiscordCommandResponse } from "./discordCommandHandler.js";
-import { PendingRunProofStore, type PendingRunProof } from "./pendingRunProofStore.js";
-import { buildRunProofConfirmationDraft } from "./runProofConfirmation.js";
+import { PendingProofStore, type PendingProof } from "./pendingRunProofStore.js";
+import { buildRunProofConfirmationDraft, type RunProofConfirmationDraftInput } from "./runProofConfirmation.js";
 import { resolveRunSubmitOptions } from "./runSubmitOptions.js";
 import { resolveSleepSubmitOptions } from "./sleepSubmitOptions.js";
+
+interface PendingRunProof extends PendingProof, RunProofConfirmationDraftInput {}
+
+interface PendingSleepProof extends PendingProof {
+  month: MonthKey;
+  proofUrl: string;
+  totalSleepMinutes: number;
+  sleepDate: string;
+  sleepStart?: string;
+  sleepEnd?: string;
+  deepSleepMinutes?: number;
+  lightSleepMinutes?: number;
+  remSleepMinutes?: number;
+  awakeMinutes?: number;
+}
+
+function formatMinutes(minutes: number): string {
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function optionString(options: Record<string, string | number | undefined>, key: string): string | undefined {
+  const value = options[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function optionNumber(options: Record<string, string | number | undefined>, key: string): number | undefined {
+  const value = options[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function requireOptionString(options: Record<string, string | number | undefined>, key: string): string {
+  const value = optionString(options, key);
+  if (!value) throw new DomainError(`Missing required option: ${key}`);
+  return value;
+}
 
 export interface DiscordBotConfig {
   token: string;
@@ -40,7 +75,8 @@ export interface DiscordBotConfig {
 export class RunnerChallengeDiscordBot {
   private readonly client = new Client({ intents: [GatewayIntentBits.Guilds] });
   private readonly handler: DiscordCommandHandler;
-  private readonly pendingRunProofs = new PendingRunProofStore();
+  private readonly pendingRunProofs = new PendingProofStore<PendingRunProof>();
+  private readonly pendingSleepProofs = new PendingProofStore<PendingSleepProof>();
 
   constructor(
     private readonly config: DiscordBotConfig,
@@ -120,6 +156,9 @@ export class RunnerChallengeDiscordBot {
       if (await this.replyWithRunProofConfirmation(interaction, workspace, actor, month, options)) {
         return;
       }
+      if (await this.replyWithSleepProofConfirmation(interaction, workspace, actor, month, options)) {
+        return;
+      }
 
       const response = await this.handler.handleDetailed({
         workspaceId: workspace.id,
@@ -154,6 +193,11 @@ export class RunnerChallengeDiscordBot {
         return;
       }
 
+      const sleepAction = this.parseSleepProofAction(interaction.customId);
+      if (sleepAction) {
+        await this.handleSleepProofAction(interaction, sleepAction.draftId, sleepAction.kind);
+        return;
+      }
       const action = this.parseRunProofAction(interaction.customId);
       if (!action) {
         return;
@@ -390,6 +434,73 @@ export class RunnerChallengeDiscordBot {
       kind: match[1] as "confirm" | "cancel",
       draftId: match[2] ?? "",
     };
+  }
+
+  private async replyWithSleepProofConfirmation(
+    interaction: ChatInputCommandInteraction,
+    workspace: Workspace,
+    actor: Member,
+    month: MonthKey,
+    options: Record<string, string | number | undefined>,
+  ): Promise<boolean> {
+    if (interaction.commandName !== "sleep-submit") return false;
+    const totalSleepMinutes = optionNumber(options, "total_sleep_minutes") ?? optionNumber(options, "ocr_total_sleep_minutes");
+    const sleepDate = optionString(options, "sleep_date") ?? optionString(options, "ocr_sleep_date");
+    if (totalSleepMinutes === undefined || !sleepDate) return false;
+    if (optionNumber(options, "total_sleep_minutes") !== undefined && optionString(options, "sleep_date")) return false;
+    const draft = this.pendingSleepProofs.create({
+      workspaceId: workspace.id,
+      month,
+      actorMemberId: actor.id,
+      proofUrl: requireOptionString(options, "proof"),
+      totalSleepMinutes,
+      sleepDate,
+      sleepStart: optionString(options, "sleep_start") ?? optionString(options, "ocr_sleep_start"),
+      sleepEnd: optionString(options, "sleep_end") ?? optionString(options, "ocr_sleep_end"),
+      deepSleepMinutes: optionNumber(options, "deep_sleep_minutes") ?? optionNumber(options, "ocr_deep_sleep_minutes"),
+      lightSleepMinutes: optionNumber(options, "light_sleep_minutes") ?? optionNumber(options, "ocr_light_sleep_minutes"),
+      remSleepMinutes: optionNumber(options, "rem_sleep_minutes") ?? optionNumber(options, "ocr_rem_sleep_minutes"),
+      awakeMinutes: optionNumber(options, "awake_minutes") ?? optionNumber(options, "ocr_awake_minutes"),
+    });
+    const content = ["I read this from your screenshot:", `Total sleep: ${formatMinutes(draft.totalSleepMinutes)}`, `Wake date: ${draft.sleepDate}`,
+      draft.sleepStart && draft.sleepEnd ? `Window: ${draft.sleepStart}-${draft.sleepEnd}` : undefined,
+      draft.deepSleepMinutes !== undefined ? `Deep: ${formatMinutes(draft.deepSleepMinutes)}` : undefined,
+      draft.lightSleepMinutes !== undefined ? `Light: ${formatMinutes(draft.lightSleepMinutes)}` : undefined,
+      draft.remSleepMinutes !== undefined ? `REM: ${formatMinutes(draft.remSleepMinutes)}` : undefined,
+      draft.awakeMinutes !== undefined ? `Awake: ${formatMinutes(draft.awakeMinutes)}` : undefined,
+      "", "Confirm to log it, or cancel and submit typed values if OCR misread it."].filter((line) => line !== undefined).join("\n");
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`sleep-proof:confirm:${draft.id}`).setLabel("Log Sleep").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`sleep-proof:cancel:${draft.id}`).setLabel("Cancel").setStyle(ButtonStyle.Secondary),
+    );
+    if (interaction.deferred) await interaction.editReply({ content, components: [row] });
+    else await interaction.reply({ content, components: [row], ephemeral: true });
+    return true;
+  }
+
+  private parseSleepProofAction(customId: string): { kind: "confirm" | "cancel"; draftId: string } | undefined {
+    const match = /^sleep-proof:(confirm|cancel):(.+)$/.exec(customId);
+    return match ? { kind: match[1] as "confirm" | "cancel", draftId: match[2] ?? "" } : undefined;
+  }
+
+  private async handleSleepProofAction(interaction: ButtonInteraction, draftId: string, kind: "confirm" | "cancel"): Promise<void> {
+    const workspace = await this.bootstrapWorkspace();
+    const actor = await this.ensureMember(workspace, interaction.user);
+    const claim = this.pendingSleepProofs.claim(draftId, (draft) => draft.workspaceId === workspace.id && draft.actorMemberId === actor.id);
+    if (claim.status === "handled") { await interaction.reply({ content: "This sleep confirmation was already handled.", ephemeral: true }); return; }
+    if (claim.status === "missing") { await interaction.update({ content: "This sleep confirmation expired. Upload the screenshot again.", components: [] }); return; }
+    if (claim.status === "forbidden") { await interaction.reply({ content: "This sleep confirmation belongs to another member.", ephemeral: true }); return; }
+    if (kind === "cancel") { await interaction.update({ content: "Sleep submission cancelled.", components: [] }); return; }
+    const draft = claim.draft;
+    const response = await this.handler.handleDetailed({ workspaceId: draft.workspaceId, month: draft.month, actorMemberId: draft.actorMemberId, currentDate: this.currentDate(), commandName: "sleep-submit", options: {
+      proof: draft.proofUrl, total_sleep_minutes: draft.totalSleepMinutes, sleep_date: draft.sleepDate, sleep_start: draft.sleepStart, sleep_end: draft.sleepEnd, deep_sleep_minutes: draft.deepSleepMinutes, light_sleep_minutes: draft.lightSleepMinutes, rem_sleep_minutes: draft.remSleepMinutes, awake_minutes: draft.awakeMinutes,
+    } });
+    if (response.content.startsWith("Error:")) {
+      await interaction.update({ content: response.content, components: [] });
+      return;
+    }
+    await interaction.update({ content: "Sleep logged. Posted to the channel.", components: [] });
+    await interaction.followUp({ content: response.content });
   }
 
   private async sendInteractionResponse(

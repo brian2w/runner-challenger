@@ -39,7 +39,7 @@ export class TesseractOcrProvider implements OcrProvider {
 
       const { stdout } = await execFileAsync(
         this.config.binaryPath ?? "tesseract",
-        [imagePath, "stdout", "-l", this.config.language ?? "eng", "--psm", "12"],
+        [imagePath, "stdout", "-l", this.config.language ?? "eng", "--psm", input.layout === "block" ? "6" : "12"],
         { timeout: this.config.timeoutMs ?? 15_000, maxBuffer: 2 * 1024 * 1024 },
       );
       return { text: stdout };
