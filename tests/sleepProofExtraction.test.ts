@@ -47,9 +47,43 @@ describe("extractSleepProofFields", () => {
 
   it("handles Tesseract reading the large Garmin 8 as S", () => {
     deepEqual(
-      extractSleepProofFields("Today\nSh 21m\nTotal Sleep", { fallbackDate: "2026-09-02" }),
+      extractSleepProofFields("Today\n\nSh 21m\n\nTotal Sleep", { fallbackDate: "2026-09-02" }),
       {
         totalSleepMinutes: 501,
+        sleepDate: "2026-09-02",
+      },
+    );
+  });
+
+  it("uses total sleep to correct reversed timeline times from Tesseract", () => {
+    deepEqual(
+      extractSleepProofFields("Today\nSh 21m\nTotal Sleep\nSleep Timeline\n7:25am\n11:03pm", { fallbackDate: "2026-09-02" }),
+      {
+        totalSleepMinutes: 501,
+        sleepDate: "2026-09-02",
+        sleepStart: "23:03",
+        sleepEnd: "07:25",
+      },
+    );
+  });
+
+  it("does not assign two-column stage values without label-local OCR", () => {
+    deepEqual(
+      extractSleepProofFields("Today\n8h 21m\nTotal Sleep\n2h 47m\n4h 43m\nDeep\nLight\n51m\n1m\nREM\nAwake", {
+        fallbackDate: "2026-09-02",
+      }),
+      {
+        totalSleepMinutes: 501,
+        sleepDate: "2026-09-02",
+      },
+    );
+  });
+
+  it("keeps multi-digit total sleep durations intact", () => {
+    deepEqual(
+      extractSleepProofFields("Today\n10h 15m\nTotal Sleep", { fallbackDate: "2026-09-02" }),
+      {
+        totalSleepMinutes: 615,
         sleepDate: "2026-09-02",
       },
     );
