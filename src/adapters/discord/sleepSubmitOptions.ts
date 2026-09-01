@@ -31,7 +31,7 @@ export async function resolveSleepSubmitOptions(
   };
   if (!ocrProvider || (input.totalSleepMinutes !== undefined && input.sleepDate)) return base;
   try {
-    const result = await ocrProvider.extractText({ imageUrl: input.proofUrl });
+    const result = await ocrProvider.extractText({ imageUrl: input.proofUrl, layout: "block" });
     const extracted = extractSleepProofFields(result.text, { fallbackDate: input.fallbackDate });
     return {
       ...base,

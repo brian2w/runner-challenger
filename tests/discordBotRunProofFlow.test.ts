@@ -13,6 +13,12 @@ class FakeOcrProvider implements OcrProvider {
   }
 }
 
+class SleepOcrProvider implements OcrProvider {
+  async extractText(): Promise<{ text: string }> {
+    return { text: "Today\n8h 21m\nTotal Sleep\n2h 47m 4h 43m\nDeep Light\n51m 1m\nREM Awake\nSleep Timeline\n11:03 pm 7:25 am" };
+  }
+}
+
 interface TestBotInternals {
   handleInteraction(interaction: ChatInputCommandInteraction): Promise<void>;
   handleButtonInteraction(interaction: TestButtonInteraction): Promise<void>;
@@ -141,6 +147,25 @@ function runSubmitInteraction(runner: User) {
   };
 }
 
+function sleepSubmitInteraction(runner: User) {
+  const replies: ReplyPayload[] = [];
+  const edits: ReplyPayload[] = [];
+  const deferrals: ReplyPayload[] = [];
+  const interaction = {
+    guildId: "guild-1", commandName: "sleep-submit", user: runner, deferred: false, replied: false,
+    memberPermissions: { has: () => false },
+    options: {
+      getAttachment: () => ({ url: "https://cdn.example/sleep.png", contentType: "image/png" }),
+      getNumber: () => null, getInteger: () => null, getString: () => null, getUser: () => null,
+    },
+    async deferReply(payload: ReplyPayload) { this.deferred = true; deferrals.push(payload); },
+    async editReply(payload: ReplyPayload) { edits.push(payload); },
+    async reply(payload: ReplyPayload) { this.replied = true; replies.push(payload); },
+    async followUp(payload: ReplyPayload) { replies.push(payload); },
+  };
+  return { interaction: interaction as unknown as ChatInputCommandInteraction, replies, edits, deferrals };
+}
+
 function buttonInteraction(customId: string, runner: User) {
   const replies: ReplyPayload[] = [];
   const updates: ReplyPayload[] = [];
@@ -223,6 +248,32 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     equal(duplicateConfirm.replies[0]?.content, "This run confirmation was already handled.");
     equal(duplicateConfirm.replies[0]?.ephemeral, true);
     equal((await repository.listSubmissionsByChallenge(challenge.id)).length, 1);
+  });
+
+  it("confirms OCR sleep and saves recognized stages", async () => {
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const bot = new RunnerChallengeDiscordBot(config(), service, repository, new SleepOcrProvider());
+    const internals = bot as unknown as TestBotInternals;
+    internals.currentMonth = () => "2026-09";
+    internals.currentDate = () => "2026-09-02";
+    const runner = user();
+    const submission = sleepSubmitInteraction(runner);
+
+    await internals.handleInteraction(submission.interaction);
+    const confirmation = submission.edits[0];
+    match(confirmation?.content ?? "", /Total sleep: 8h 21m/);
+    match(confirmation?.content ?? "", /Deep: 2h 47m/);
+    match(confirmation?.content ?? "", /Light: 4h 43m/);
+    match(confirmation?.content ?? "", /REM: 0h 51m/);
+    match(confirmation?.content ?? "", /Awake: 0h 1m/);
+
+    const confirmId = customIds(confirmation).find((id) => id.startsWith("sleep-proof:confirm:"));
+    ok(confirmId);
+    const confirmed = buttonInteraction(confirmId, runner);
+    await internals.handleButtonInteraction(confirmed.interaction);
+    match(confirmed.updates[0]?.content ?? "", /Sleep logged/);
+    match(confirmed.followUps[0]?.content ?? "", /Sleep logged: 8h 21m/);
   });
 
   it("shows the saved profile image on status replies", async () => {
