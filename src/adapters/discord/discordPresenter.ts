@@ -53,8 +53,9 @@ export class DiscordPresenter {
     return [
       "**Sleep logged**",
       `**${submission.sleepDate}** · **${formatMinutes(submission.totalSleepMinutes)} total**`,
-      submission.sleepStart && submission.sleepEnd ? `${submission.sleepStart}-${submission.sleepEnd}` : undefined,
+      renderSleepWindow(submission.sleepStart, submission.sleepEnd),
       stages.length > 0 ? stages.join(" · ") : undefined,
+      "Use `/sleep-insights` to compare your stages with your own history.",
     ].filter(Boolean).join("\n");
   }
 
@@ -187,4 +188,11 @@ export class DiscordPresenter {
 
     return `**Leaderboard update scheduled · ${month}**`;
   }
+}
+
+function renderSleepWindow(start?: string, end?: string): string | undefined {
+  if (start && end) return `${start}-${end}`;
+  if (start) return `Started ${start} (wake time not recorded)`;
+  if (end) return `Woke ${end} (start time not recorded)`;
+  return undefined;
 }

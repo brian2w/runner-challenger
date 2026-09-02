@@ -121,6 +121,8 @@ describe("SleepService", () => {
         proof: "https://cdn.example/sleep.png",
         total_sleep_minutes: 466,
         sleep_date: "2026-08-31",
+        sleep_start: "23:00",
+        sleep_end: "07:00",
         deep_sleep_minutes: 200,
         light_sleep_minutes: 247,
         rem_sleep_minutes: 19,
@@ -133,6 +135,8 @@ describe("SleepService", () => {
     match(response.content, /Light 4h 7m/);
     match(response.content, /REM 0h 19m/);
     match(response.content, /Awake 0h 1m/);
+    match(response.content, /23:00-07:00/);
+    match(response.content, /\/sleep-insights/);
   });
 
   it("combines a typed sleep value with an OCR suggestion", async () => {
