@@ -108,7 +108,7 @@ describe("SleepService", () => {
     match(String(insights.stageInsights[0]?.label), /Deep/);
   });
 
-  it("keeps stage data out of public Discord command responses", async () => {
+  it("shows logged sleep details in the public Discord receipt", async () => {
     const { service, repository } = await fixture();
     const handler = new DiscordCommandHandler(new ChallengeService(repository), repository, service);
     const response = await handler.handleDetailed({
@@ -127,8 +127,12 @@ describe("SleepService", () => {
         awake_minutes: 1,
       },
     });
-    match(response.content, /Sleep logged: 7h 46m/);
-    equal(response.content.includes("Deep"), false);
+    match(response.content, /\*\*Sleep logged\*\*/);
+    match(response.content, /2026-08-31.*7h 46m total/);
+    match(response.content, /Deep 3h 20m/);
+    match(response.content, /Light 4h 7m/);
+    match(response.content, /REM 0h 19m/);
+    match(response.content, /Awake 0h 1m/);
   });
 
   it("combines a typed sleep value with an OCR suggestion", async () => {

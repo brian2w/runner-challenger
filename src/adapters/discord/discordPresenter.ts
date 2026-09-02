@@ -7,6 +7,7 @@ import type {
   NotificationIntent,
   SleepInsights,
   SleepLeaderboardRow,
+  SleepSubmission,
 } from "../../core/types.js";
 
 function renderProgressBar(percent: number): string {
@@ -42,6 +43,21 @@ function renderMonthName(month: string): string {
 }
 
 export class DiscordPresenter {
+  renderSleepReceipt(submission: SleepSubmission): string {
+    const stages = [
+      submission.deepSleepMinutes !== undefined ? `Deep ${formatMinutes(submission.deepSleepMinutes)}` : undefined,
+      submission.lightSleepMinutes !== undefined ? `Light ${formatMinutes(submission.lightSleepMinutes)}` : undefined,
+      submission.remSleepMinutes !== undefined ? `REM ${formatMinutes(submission.remSleepMinutes)}` : undefined,
+      submission.awakeMinutes !== undefined ? `Awake ${formatMinutes(submission.awakeMinutes)}` : undefined,
+    ].filter((stage): stage is string => stage !== undefined);
+    return [
+      "**Sleep logged**",
+      `**${submission.sleepDate}** · **${formatMinutes(submission.totalSleepMinutes)} total**`,
+      submission.sleepStart && submission.sleepEnd ? `${submission.sleepStart}-${submission.sleepEnd}` : undefined,
+      stages.length > 0 ? stages.join(" · ") : undefined,
+    ].filter(Boolean).join("\n");
+  }
+
   renderSleepLeaderboard(rows: SleepLeaderboardRow[]): string {
     const qualified = rows.filter((row) => row.qualifies);
     const lines = qualified.length === 0

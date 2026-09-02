@@ -273,7 +273,8 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     const confirmed = buttonInteraction(confirmId, runner);
     await internals.handleButtonInteraction(confirmed.interaction);
     match(confirmed.updates[0]?.content ?? "", /Sleep logged/);
-    match(confirmed.followUps[0]?.content ?? "", /Sleep logged: 8h 21m/);
+    match(confirmed.followUps[0]?.content ?? "", /\*\*Sleep logged\*\*/);
+    match(confirmed.followUps[0]?.content ?? "", /Deep 2h 47m/);
   });
 
   it("shows the saved profile image on status replies", async () => {
