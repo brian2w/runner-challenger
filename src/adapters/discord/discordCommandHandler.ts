@@ -119,7 +119,7 @@ export class DiscordCommandHandler {
             awakeMinutes: this.optionalNonNegativeInteger(input.options, "awake_minutes"),
             latestAllowedDate: this.currentDate(input),
           });
-          return { content: `Sleep logged: ${formatMinutes(submission.totalSleepMinutes)} for ${submission.sleepDate}. Use \`/sleep-insights\` for your private stage comparison.` };
+          return { content: this.presenter.renderSleepReceipt(submission) };
         }
         case "sleep-leaderboard": {
           const rows = await this.requireSleepService().getLeaderboard({

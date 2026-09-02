@@ -7,6 +7,7 @@ import type {
   NotificationIntent,
   SleepInsights,
   SleepLeaderboardRow,
+  SleepSubmission,
 } from "../../core/types.js";
 
 function renderProgressBar(percent: number): string {
@@ -42,6 +43,22 @@ function renderMonthName(month: string): string {
 }
 
 export class DiscordPresenter {
+  renderSleepReceipt(submission: SleepSubmission): string {
+    const stages = [
+      submission.deepSleepMinutes !== undefined ? `Deep ${formatMinutes(submission.deepSleepMinutes)}` : undefined,
+      submission.lightSleepMinutes !== undefined ? `Light ${formatMinutes(submission.lightSleepMinutes)}` : undefined,
+      submission.remSleepMinutes !== undefined ? `REM ${formatMinutes(submission.remSleepMinutes)}` : undefined,
+      submission.awakeMinutes !== undefined ? `Awake ${formatMinutes(submission.awakeMinutes)}` : undefined,
+    ].filter((stage): stage is string => stage !== undefined);
+    return [
+      "**Sleep logged**",
+      `**${submission.sleepDate}** · **${formatMinutes(submission.totalSleepMinutes)} total**`,
+      renderSleepWindow(submission.sleepStart, submission.sleepEnd),
+      stages.length > 0 ? stages.join(" · ") : undefined,
+      "Use `/sleep-insights` to compare your stages with your own history.",
+    ].filter(Boolean).join("\n");
+  }
+
   renderSleepLeaderboard(rows: SleepLeaderboardRow[]): string {
     const qualified = rows.filter((row) => row.qualifies);
     const lines = qualified.length === 0
@@ -171,4 +188,11 @@ export class DiscordPresenter {
 
     return `**Leaderboard update scheduled · ${month}**`;
   }
+}
+
+function renderSleepWindow(start?: string, end?: string): string | undefined {
+  if (start && end) return `${start}-${end}`;
+  if (start) return `Started ${start} (wake time not recorded)`;
+  if (end) return `Woke ${end} (start time not recorded)`;
+  return undefined;
 }

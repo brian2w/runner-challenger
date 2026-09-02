@@ -19,7 +19,7 @@ For the architecture and agent-facing user-flow map, see [docs/CONTEXT.md](docs/
 | --- | --- |
 | `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
 | `/run-submit proof [distance_km] [run_date] [source] [note]` | Log a run with phone screenshot proof. If distance/date are omitted, the bot can privately read the screenshot and show Log Run / Cancel buttons before saving. |
-| `/sleep-submit proof total_sleep_minutes sleep_date [sleep_start] [sleep_end] [deep_sleep_minutes] [light_sleep_minutes] [rem_sleep_minutes] [awake_minutes]` | Log a Garmin sleep screenshot. The date is the local wake date; optional stages stay private. |
+| `/sleep-submit proof total_sleep_minutes sleep_date [sleep_start] [sleep_end] [deep_sleep_minutes] [light_sleep_minutes] [rem_sleep_minutes] [awake_minutes]` | Log a Garmin sleep screenshot. The date is the local wake date; confirmed details are posted in a compact public receipt. |
 | `/sleep-leaderboard` | Show qualifying standings for the current Monday-Sunday sleep week. |
 | `/sleep-status` | Show your current average, logged nights, streak, and qualification status. |
 | `/sleep-insights` | Privately compare Garmin stage estimates with your own history. |
@@ -85,7 +85,7 @@ Submit a Garmin sleep screenshot and the values shown on it:
 
 The public leaderboard uses a transparent `Challenge Sleep Score`: 60 points for total sleep duration (full points from 7-9 hours, tapering outside that range) and 40 points for consistency with the member's own prior sleep midpoint. During the first three nights without enough midpoint history, the duration component is normalized to a provisional 0-100 score. Four logged nights are required to qualify for the weekly leaderboard.
 
-`/sleep-insights` is private. After seven earlier stage-bearing screenshots, it compares Deep, REM, and Awake minutes with the member's own historical range. Garmin stage estimates are never compared between members, and the command is not medical advice. The bot records that proof was submitted but does not persist the sensitive screenshot URL.
+When OCR reads the required total and wake date, `/sleep-submit` shows a private confirmation before saving. If either required field is missing, it returns rerun instructions instead. After confirmation, the public receipt includes the date, total, window, and any reliably recognized stage values; the screenshot URL is never posted or persisted. `/sleep-insights` remains private and, after seven earlier stage-bearing screenshots, compares Deep, REM, and Awake minutes with the member's own historical range. Garmin stage estimates are never compared between members, and the command is not medical advice.
 
 If `total_sleep_minutes` or `sleep_date` is omitted, OCR reads Garmin's stable Total Sleep and Sleep Score Duration layouts and returns suggested values. Rerun the command with the confirmed values before the record is saved.
 

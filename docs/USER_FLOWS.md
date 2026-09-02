@@ -14,7 +14,7 @@ Logs a proof-backed run in the active month. Typed distance and date save immedi
 
 ### `/sleep-submit`
 
-Logs one Garmin proof-backed sleep record for its local wake date. Total sleep and wake date may be read from a screenshot with OCR, but the bot asks the user to rerun with the detected values before saving. Re-submitting the same wake date replaces that member's record. The bot retains proof submission, not the screenshot URL.
+Logs one Garmin proof-backed sleep record for its local wake date. Total sleep, wake date, and reliable stage values may be read from a screenshot with OCR. When the required total and wake date are recognized, the bot shows a private confirmation before saving; otherwise it returns rerun instructions for the missing fields. After confirmation, the channel receives a compact receipt with the logged details. The bot retains proof submission, not the screenshot URL.
 
 ### `/sleep-leaderboard`
 
