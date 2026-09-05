@@ -30,10 +30,10 @@ export async function resolveSleepSubmitOptions(
     awake_minutes: input.awakeMinutes,
   };
   if (!ocrProvider || (input.proofUrls.length === 1 && input.totalSleepMinutes !== undefined && input.sleepDate)) return base;
-  const extracted = await Promise.all(input.proofUrls.map(async (proofUrl) => {
+  const extracted = await Promise.all(input.proofUrls.map(async (proofUrl, index) => {
     try {
       const result = await ocrProvider.extractText({ imageUrl: proofUrl, layout: "sparse" });
-      return extractSleepProofFields(result.text, { fallbackDate: input.fallbackDate });
+      return extractSleepProofFields(result.text, index === 0 ? { fallbackDate: input.fallbackDate } : {});
     } catch {
       return {};
     }

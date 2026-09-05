@@ -19,7 +19,7 @@ For the architecture and agent-facing user-flow map, see [docs/CONTEXT.md](docs/
 | --- | --- |
 | `/goal-set distance_km` | Set your own base monthly goal. Carryover is added automatically when applicable. |
 | `/run-submit proof [distance_km] [run_date] [source] [note]` | Log a run with phone screenshot proof. If distance/date are omitted, the bot can privately read the screenshot and show Log Run / Cancel buttons before saving. |
-| `/sleep-submit proof [proof_2] [proof_3] [proof_4] [proof_5] total_sleep_minutes sleep_date [sleep_start] [sleep_end] [deep_sleep_minutes] [light_sleep_minutes] [rem_sleep_minutes] [awake_minutes]` | Log Garmin sleep with up to five screenshots. The date is the local wake date; confirmed details are posted in a compact public receipt. |
+| `/sleep-submit proof [proof_2] [proof_3] [proof_4] [proof_5] [total_sleep_minutes] [sleep_date] [sleep_start] [sleep_end] [deep_sleep_minutes] [light_sleep_minutes] [rem_sleep_minutes] [awake_minutes]` | Log Garmin sleep with up to five screenshots. The date is the local wake date; confirmed details are posted in a compact public receipt. |
 | `/sleep-leaderboard` | Show qualifying standings for the current Monday-Sunday sleep week. |
 | `/sleep-status` | Show your current average, logged nights, streak, and qualification status. |
 | `/sleep-insights` | Privately compare Garmin stage estimates with your own history. |

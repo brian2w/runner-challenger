@@ -62,4 +62,22 @@ describe("resolveSleepSubmitOptions", () => {
     equal(options.ocr_conflict, "total sleep");
     equal(options.ocr_total_sleep_minutes, undefined);
   });
+
+  it("does not infer a supporting proof date when the overview has an explicit date", async () => {
+    const provider: OcrProvider = {
+      async extractText(input) {
+        return input.imageUrl.endsWith("overview.png")
+          ? { text: "2026-09-05\n7h 0m\nTotal Sleep" }
+          : { text: "Yesterday\n1h 11m\nDeep" };
+      },
+    };
+
+    const options = await resolveSleepSubmitOptions({
+      proofUrls: ["https://cdn.example/overview.png", "https://cdn.example/supporting.png"],
+      fallbackDate: "2026-09-05",
+    }, provider);
+
+    equal(options.ocr_sleep_date, "2026-09-05");
+    equal(options.ocr_conflict, undefined);
+  });
 });

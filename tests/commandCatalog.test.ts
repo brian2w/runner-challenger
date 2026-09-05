@@ -1,6 +1,6 @@
 import { deepEqual, equal } from "node:assert/strict";
 import { describe, it } from "node:test";
-import { slashCommands, SLEEP_PROOF_OPTION_NAMES } from "../src/adapters/discord/commandCatalog.js";
+import { slashCommands } from "../src/adapters/discord/commandCatalog.js";
 
 describe("slashCommands", () => {
   it("registers the proof-first command catalog", () => {
@@ -31,6 +31,12 @@ describe("slashCommands", () => {
     equal(removePunishment?.options?.[0]?.type, "integer");
     const sleepSubmit = slashCommands.find((command) => command.name === "sleep-submit");
     equal(sleepSubmit?.options?.find((option) => option.name === "total_sleep_minutes")?.type, "integer");
-    deepEqual(sleepSubmit?.options?.filter((option) => option.type === "attachment").map((option) => option.name), SLEEP_PROOF_OPTION_NAMES);
+    deepEqual(sleepSubmit?.options?.filter((option) => option.type === "attachment").map(({ name, required }) => ({ name, required })), [
+      { name: "proof", required: true },
+      { name: "proof_2", required: false },
+      { name: "proof_3", required: false },
+      { name: "proof_4", required: false },
+      { name: "proof_5", required: false },
+    ]);
   });
 });
