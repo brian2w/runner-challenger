@@ -19,6 +19,14 @@ class SleepOcrProvider implements OcrProvider {
   }
 }
 
+class MultiSleepOcrProvider implements OcrProvider {
+  async extractText(input: { imageUrl: string }): Promise<{ text: string }> {
+    return input.imageUrl.endsWith("overview.png")
+      ? { text: "Today\n6h 59m\nTotal Sleep" }
+      : { text: "1h 11m 3h 51m\nDeep Light\n1h 57m 5m\nREM Awake" };
+  }
+}
+
 interface TestBotInternals {
   handleInteraction(interaction: ChatInputCommandInteraction): Promise<void>;
   handleButtonInteraction(interaction: TestButtonInteraction): Promise<void>;
@@ -147,7 +155,9 @@ function runSubmitInteraction(runner: User) {
   };
 }
 
-function sleepSubmitInteraction(runner: User) {
+function sleepSubmitInteraction(runner: User, attachments: Record<string, { url: string; contentType: string }> = {
+  proof: { url: "https://cdn.example/sleep.png", contentType: "image/png" },
+}) {
   const replies: ReplyPayload[] = [];
   const edits: ReplyPayload[] = [];
   const deferrals: ReplyPayload[] = [];
@@ -155,7 +165,7 @@ function sleepSubmitInteraction(runner: User) {
     guildId: "guild-1", commandName: "sleep-submit", user: runner, deferred: false, replied: false,
     memberPermissions: { has: () => false },
     options: {
-      getAttachment: () => ({ url: "https://cdn.example/sleep.png", contentType: "image/png" }),
+      getAttachment: (name: string) => attachments[name] ?? null,
       getNumber: () => null, getInteger: () => null, getString: () => null, getUser: () => null,
     },
     async deferReply(payload: ReplyPayload) { this.deferred = true; deferrals.push(payload); },
@@ -275,6 +285,28 @@ describe("RunnerChallengeDiscordBot proof confirmation flow", () => {
     match(confirmed.updates[0]?.content ?? "", /Sleep logged/);
     match(confirmed.followUps[0]?.content ?? "", /\*\*Sleep logged\*\*/);
     match(confirmed.followUps[0]?.content ?? "", /Deep 2h 47m/);
+  });
+
+  it("merges optional sleep proof screenshots before confirmation", async () => {
+    const repository = new InMemoryChallengeRepository();
+    const service = new ChallengeService(repository);
+    const bot = new RunnerChallengeDiscordBot(config(), service, repository, new MultiSleepOcrProvider());
+    const internals = bot as unknown as TestBotInternals;
+    internals.currentMonth = () => "2026-09";
+    internals.currentDate = () => "2026-09-05";
+    const submission = sleepSubmitInteraction(user(), {
+      proof: { url: "https://cdn.example/overview.png", contentType: "image/png" },
+      proof_2: { url: "https://cdn.example/stages.png", contentType: "image/png" },
+    });
+
+    await internals.handleInteraction(submission.interaction);
+
+    const confirmation = submission.edits[0];
+    match(confirmation?.content ?? "", /Total sleep: 6h 59m/);
+    match(confirmation?.content ?? "", /Deep: 1h 11m/);
+    match(confirmation?.content ?? "", /Light: 3h 51m/);
+    match(confirmation?.content ?? "", /REM: 1h 57m/);
+    match(confirmation?.content ?? "", /Awake: 0h 5m/);
   });
 
   it("shows the saved profile image on status replies", async () => {

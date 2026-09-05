@@ -12,6 +12,15 @@ export interface SlashCommandDefinition {
   options?: SlashCommandOption[];
 }
 
+export const SLEEP_PROOF_OPTION_NAMES = ["proof", "proof_2", "proof_3", "proof_4", "proof_5"] as const;
+
+const sleepProofOptions: SlashCommandOption[] = SLEEP_PROOF_OPTION_NAMES.map((name, index) => ({
+  name,
+  description: index === 0 ? "Required Garmin overview screenshot." : "Optional supporting Garmin screenshot.",
+  type: "attachment",
+  required: index === 0,
+}));
+
 export const slashCommands: SlashCommandDefinition[] = [
   {
     name: "goal-set",
@@ -31,9 +40,9 @@ export const slashCommands: SlashCommandDefinition[] = [
   },
   {
     name: "sleep-submit",
-    description: "Log Garmin sleep with screenshot proof and total sleep in minutes.",
+    description: "Log Garmin sleep with up to five screenshot proofs.",
     options: [
-      { name: "proof", description: "Garmin sleep screenshot.", type: "attachment", required: true },
+      ...sleepProofOptions,
       { name: "total_sleep_minutes", description: "Total sleep shown by Garmin, in minutes, if not using OCR.", type: "integer", required: false },
       { name: "sleep_date", description: "Wake date in YYYY-MM-DD, if not using OCR.", type: "string", required: false },
       { name: "sleep_start", description: "Optional start time in 24-hour HH:MM.", type: "string", required: false },

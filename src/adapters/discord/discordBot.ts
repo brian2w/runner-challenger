@@ -22,7 +22,7 @@ import type { OcrProvider } from "../../ocr/ocrProvider.js";
 import type { ChallengeRepository } from "../../repositories/challengeRepository.js";
 import type { ChallengeService } from "../../services/challengeService.js";
 import { SleepService } from "../../services/sleepService.js";
-import { slashCommands, type SlashCommandDefinition, type SlashCommandOption } from "./commandCatalog.js";
+import { slashCommands, SLEEP_PROOF_OPTION_NAMES, type SlashCommandDefinition, type SlashCommandOption } from "./commandCatalog.js";
 import { DiscordCommandHandler, type DiscordCommandResponse } from "./discordCommandHandler.js";
 import { PendingProofStore, type PendingProof } from "./pendingRunProofStore.js";
 import { buildRunProofConfirmationDraft, type RunProofConfirmationDraftInput } from "./runProofConfirmation.js";
@@ -341,12 +341,16 @@ export class RunnerChallengeDiscordBot {
   }
 
   private async sleepSubmitOptions(interaction: ChatInputCommandInteraction): Promise<Record<string, string | number | undefined>> {
-    const proof = interaction.options.getAttachment("proof", true);
-    if (proof.contentType && !proof.contentType.startsWith("image/")) {
-      throw new DomainError("Proof must be an image screenshot.");
-    }
-    return resolveSleepSubmitOptions({
-      proofUrl: proof.url,
+    const proofUrls = SLEEP_PROOF_OPTION_NAMES.flatMap((name) => {
+      const proof = interaction.options.getAttachment(name, name === "proof");
+      if (!proof) return [];
+      if (proof.contentType && !proof.contentType.startsWith("image/")) {
+        throw new DomainError("Proof must be an image screenshot.");
+      }
+      return [proof.url];
+    });
+    const options = await resolveSleepSubmitOptions({
+      proofUrls,
       totalSleepMinutes: interaction.options.getInteger("total_sleep_minutes") ?? undefined,
       sleepDate: interaction.options.getString("sleep_date") ?? undefined,
       sleepStart: interaction.options.getString("sleep_start") ?? undefined,
@@ -357,6 +361,11 @@ export class RunnerChallengeDiscordBot {
       awakeMinutes: interaction.options.getInteger("awake_minutes") ?? undefined,
       fallbackDate: this.currentDate(),
     }, this.ocrProvider);
+    const conflict = optionString(options, "ocr_conflict");
+    if (conflict) {
+      throw new DomainError(`Supporting screenshots disagree about ${conflict}. Rerun with typed values for the disputed fields.`);
+    }
+    return options;
   }
 
   private shouldUseOcr(interaction: ChatInputCommandInteraction): boolean {
@@ -365,7 +374,8 @@ export class RunnerChallengeDiscordBot {
       Boolean(this.ocrProvider) &&
       (interaction.commandName === "run-submit"
         ? interaction.options.getNumber("distance_km") === null || interaction.options.getString("run_date") === null
-        : interaction.options.getInteger("total_sleep_minutes") === null || interaction.options.getString("sleep_date") === null)
+        : interaction.options.getInteger("total_sleep_minutes") === null || interaction.options.getString("sleep_date") === null ||
+          SLEEP_PROOF_OPTION_NAMES.slice(1).some((name) => interaction.options.getAttachment(name) !== null))
     );
   }
 
