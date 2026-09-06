@@ -15,7 +15,7 @@ class MultiProofOcrProvider implements OcrProvider {
 }
 
 describe("resolveSleepSubmitOptions", () => {
-  it("merges complementary fields from up to five screenshots using sparse OCR", async () => {
+  it("uses the overview's block layout and supporting screenshots' sparse layout", async () => {
     const provider = new MultiProofOcrProvider();
 
     const options = await resolveSleepSubmitOptions({
@@ -44,7 +44,50 @@ describe("resolveSleepSubmitOptions", () => {
       ocr_conflict: undefined,
     });
     equal(provider.inputs.length, 2);
-    provider.inputs.forEach((input) => equal(input.layout, "sparse"));
+    deepEqual(provider.inputs.map((input) => input.layout), ["block", "sparse"]);
+  });
+
+  it("falls back to sparse OCR when a block-layout overview is incomplete", async () => {
+    const provider: OcrProvider = {
+      async extractText(input) {
+        return input.layout === "block"
+          ? { text: "Today" }
+          : { text: "Today\n7h 30m\nTotal Sleep" };
+      },
+    };
+
+    const options = await resolveSleepSubmitOptions({
+      proofUrls: ["https://cdn.example/overview.png"],
+      fallbackDate: "2026-09-05",
+    }, provider);
+
+    equal(options.ocr_total_sleep_minutes, 450);
+    equal(options.ocr_sleep_date, "2026-09-05");
+  });
+
+  it("falls back to block OCR when a supporting screenshot has no sparse text", async () => {
+    const inputs: OcrInput[] = [];
+    const provider: OcrProvider = {
+      async extractText(input) {
+        inputs.push(input);
+        if (input.imageUrl.endsWith("overview.png")) return { text: "Today\n7h 30m\nTotal Sleep" };
+        return input.layout === "sparse"
+          ? { text: "" }
+          : { text: "Deep 1h 11m" };
+      },
+    };
+
+    const options = await resolveSleepSubmitOptions({
+      proofUrls: ["https://cdn.example/overview.png", "https://cdn.example/supporting.png"],
+      fallbackDate: "2026-09-05",
+    }, provider);
+
+    equal(options.ocr_deep_sleep_minutes, 71);
+    deepEqual(inputs.map((input) => [input.imageUrl, input.layout]), [
+      ["https://cdn.example/overview.png", "block"],
+      ["https://cdn.example/supporting.png", "sparse"],
+      ["https://cdn.example/supporting.png", "block"],
+    ]);
   });
 
   it("reports conflicting required values until the participant types them", async () => {
