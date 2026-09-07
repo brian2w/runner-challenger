@@ -1,8 +1,14 @@
-import { deepEqual } from "node:assert/strict";
+import { deepEqual, equal } from "node:assert/strict";
 import { describe, it } from "node:test";
-import { extractSleepProofFields } from "../src/services/sleepProofExtraction.js";
+import { extractSleepProofDateEvidence, extractSleepProofFields, resolveSleepProofDate } from "../src/services/sleepProofExtraction.js";
 
 describe("extractSleepProofFields", () => {
+  it("keeps OCR date evidence separate from fallback-date resolution", () => {
+    deepEqual(extractSleepProofDateEvidence("Garmin Sleep\nYesterday"), { kind: "relative", offsetDays: -1 });
+    deepEqual(extractSleepProofFields("Garmin Sleep\nYesterday"), {});
+    equal(resolveSleepProofDate(extractSleepProofDateEvidence("Garmin Sleep\nYesterday"), "2026-09-05"), "2026-09-04");
+  });
+
   it("extracts the Garmin summary labels and timeline", () => {
     deepEqual(
       extractSleepProofFields(

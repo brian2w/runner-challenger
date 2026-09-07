@@ -363,7 +363,7 @@ export class RunnerChallengeDiscordBot {
     }, this.ocrProvider);
     const conflict = optionString(options, "ocr_conflict");
     if (conflict) {
-      throw new DomainError(`Supporting screenshots disagree about ${conflict}. Rerun with typed values for the disputed fields.`);
+      throw new DomainError(`OCR results disagree about ${conflict}. Rerun with typed values for the disputed fields.`);
     }
     return options;
   }
