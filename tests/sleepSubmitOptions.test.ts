@@ -48,11 +48,13 @@ describe("resolveSleepSubmitOptions", () => {
   });
 
   it("falls back to sparse OCR when a block-layout overview is incomplete", async () => {
+    const inputs: OcrInput[] = [];
     const provider: OcrProvider = {
       async extractText(input) {
+        inputs.push(input);
         return input.layout === "block"
-          ? { text: "Today" }
-          : { text: "Today\n7h 30m\nTotal Sleep" };
+          ? { text: "7h 30m\nTotal Sleep" }
+          : { text: "2026-09-04" };
       },
     };
 
@@ -62,7 +64,8 @@ describe("resolveSleepSubmitOptions", () => {
     }, provider);
 
     equal(options.ocr_total_sleep_minutes, 450);
-    equal(options.ocr_sleep_date, "2026-09-05");
+    equal(options.ocr_sleep_date, "2026-09-04");
+    deepEqual(inputs.map((input) => input.layout), ["block", "sparse"]);
   });
 
   it("falls back to block OCR when a supporting screenshot has no sparse text", async () => {
@@ -72,7 +75,7 @@ describe("resolveSleepSubmitOptions", () => {
         inputs.push(input);
         if (input.imageUrl.endsWith("overview.png")) return { text: "Today\n7h 30m\nTotal Sleep" };
         return input.layout === "sparse"
-          ? { text: "" }
+          ? { text: "Yesterday" }
           : { text: "Deep 1h 11m" };
       },
     };

@@ -1,5 +1,5 @@
-import { extractSleepProofFields } from "../../services/sleepProofExtraction.js";
-import type { ExtractedSleepProofFields } from "../../services/sleepProofExtraction.js";
+import { extractSleepProofDateEvidence, extractSleepProofFields, resolveSleepProofDate } from "../../services/sleepProofExtraction.js";
+import type { ExtractedSleepProofFields, SleepProofDateEvidence } from "../../services/sleepProofExtraction.js";
 import type { OcrInput, OcrProvider } from "../../ocr/ocrProvider.js";
 
 const PRIMARY_PROOF_LAYOUTS: readonly OcrInput["layout"][] = ["block", "sparse"];
@@ -35,10 +35,12 @@ export async function resolveSleepSubmitOptions(
   };
   if (!ocrProvider || (input.proofUrls.length === 1 && input.totalSleepMinutes !== undefined && input.sleepDate)) return base;
   const extracted = (await Promise.all(input.proofUrls.map((proofUrl, index) =>
-    extractProofFields(proofUrl, index === 0, input.fallbackDate, ocrProvider),
+    extractProofFields(proofUrl, index === 0, ocrProvider),
   ))).flat();
-  const totalSleepMinutes = merge(extracted.map((fields) => fields.totalSleepMinutes));
-  const sleepDate = merge(extracted.map((fields) => fields.sleepDate));
+  const totalSleepMinutes = merge(extracted.map(({ fields }) => fields.totalSleepMinutes));
+  const sleepDate = merge(extracted.map(({ dateEvidence, isPrimaryProof }) =>
+    resolveSleepProofDate(dateEvidence, isPrimaryProof ? input.fallbackDate : undefined),
+  ));
   const conflicts = [
     input.totalSleepMinutes === undefined && totalSleepMinutes.conflict ? "total sleep" : undefined,
     input.sleepDate === undefined && sleepDate.conflict ? "wake date" : undefined,
@@ -47,12 +49,12 @@ export async function resolveSleepSubmitOptions(
     ...base,
     ocr_total_sleep_minutes: totalSleepMinutes.value,
     ocr_sleep_date: sleepDate.value,
-    ocr_sleep_start: merge(extracted.map((fields) => fields.sleepStart)).value,
-    ocr_sleep_end: merge(extracted.map((fields) => fields.sleepEnd)).value,
-    ocr_deep_sleep_minutes: merge(extracted.map((fields) => fields.deepSleepMinutes)).value,
-    ocr_light_sleep_minutes: merge(extracted.map((fields) => fields.lightSleepMinutes)).value,
-    ocr_rem_sleep_minutes: merge(extracted.map((fields) => fields.remSleepMinutes)).value,
-    ocr_awake_minutes: merge(extracted.map((fields) => fields.awakeMinutes)).value,
+    ocr_sleep_start: merge(extracted.map(({ fields }) => fields.sleepStart)).value,
+    ocr_sleep_end: merge(extracted.map(({ fields }) => fields.sleepEnd)).value,
+    ocr_deep_sleep_minutes: merge(extracted.map(({ fields }) => fields.deepSleepMinutes)).value,
+    ocr_light_sleep_minutes: merge(extracted.map(({ fields }) => fields.lightSleepMinutes)).value,
+    ocr_rem_sleep_minutes: merge(extracted.map(({ fields }) => fields.remSleepMinutes)).value,
+    ocr_awake_minutes: merge(extracted.map(({ fields }) => fields.awakeMinutes)).value,
     ocr_conflict: conflicts.length > 0 ? conflicts.join(" and ") : undefined,
   };
 }
@@ -60,17 +62,17 @@ export async function resolveSleepSubmitOptions(
 async function extractProofFields(
   proofUrl: string,
   isPrimaryProof: boolean,
-  fallbackDate: string | undefined,
   ocrProvider: OcrProvider,
-): Promise<ExtractedSleepProofFields[]> {
+): Promise<OcrProofExtraction[]> {
   const layouts = isPrimaryProof ? PRIMARY_PROOF_LAYOUTS : SUPPORTING_PROOF_LAYOUTS;
-  const attempts: ExtractedSleepProofFields[] = [];
+  const attempts: OcrProofExtraction[] = [];
   for (const layout of layouts) {
     try {
       const result = await ocrProvider.extractText({ imageUrl: proofUrl, layout });
-      const fields = extractSleepProofFields(result.text, isPrimaryProof ? { fallbackDate } : {});
-      attempts.push(fields);
-      if (isPrimaryProof ? hasRequiredFields(fields) : hasAnyFields(fields)) break;
+      const fields = extractSleepProofFields(result.text);
+      const dateEvidence = extractSleepProofDateEvidence(result.text);
+      attempts.push({ fields, dateEvidence, isPrimaryProof });
+      if (isPrimaryProof ? hasRequiredFields(fields, dateEvidence) : hasAnyFields(fields)) break;
     } catch (error) {
       console.warn("Sleep proof OCR failed:", error instanceof Error ? error.message : String(error));
     }
@@ -78,8 +80,14 @@ async function extractProofFields(
   return attempts;
 }
 
-function hasRequiredFields(fields: ExtractedSleepProofFields): boolean {
-  return fields.totalSleepMinutes !== undefined && fields.sleepDate !== undefined;
+interface OcrProofExtraction {
+  fields: ExtractedSleepProofFields;
+  dateEvidence?: SleepProofDateEvidence;
+  isPrimaryProof: boolean;
+}
+
+function hasRequiredFields(fields: ExtractedSleepProofFields, dateEvidence: SleepProofDateEvidence | undefined): boolean {
+  return fields.totalSleepMinutes !== undefined && dateEvidence !== undefined;
 }
 
 function hasAnyFields(fields: ExtractedSleepProofFields): boolean {

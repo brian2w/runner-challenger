@@ -13,6 +13,10 @@ export interface SleepProofExtractionOptions {
   fallbackDate?: string;
 }
 
+export type SleepProofDateEvidence =
+  | { kind: "absolute"; value: string }
+  | { kind: "relative"; offsetDays: 0 | -1 };
+
 interface DurationExtractionOptions {
   allowsTesseractEightAlias?: boolean;
   includesNearestNonEmptyLine?: boolean;
@@ -131,18 +135,32 @@ function parseHours(value: string | undefined, allowsTesseractEightAlias: boolea
   return Number.isInteger(hours) ? hours : undefined;
 }
 
-function extractSleepDate(text: string, fallbackDate?: string): string | undefined {
+export function extractSleepProofDateEvidence(text: string): SleepProofDateEvidence | undefined {
   const iso = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/.exec(text);
   if (iso) {
-    return formatDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+    const value = formatDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+    return value ? { kind: "absolute", value } : undefined;
   }
-  if (/\byesterday\b/i.test(text) && fallbackDate) {
-    return shiftDate(fallbackDate, -1);
+  if (/\byesterday\b/i.test(text)) {
+    return { kind: "relative", offsetDays: -1 };
   }
-  if (/\btoday\b/i.test(text) && fallbackDate) {
-    return fallbackDate;
+  if (/\btoday\b/i.test(text)) {
+    return { kind: "relative", offsetDays: 0 };
   }
   return undefined;
+}
+
+export function resolveSleepProofDate(
+  evidence: SleepProofDateEvidence | undefined,
+  fallbackDate?: string,
+): string | undefined {
+  if (!evidence) return undefined;
+  if (evidence.kind === "absolute") return evidence.value;
+  return fallbackDate ? shiftDate(fallbackDate, evidence.offsetDays) : undefined;
+}
+
+function extractSleepDate(text: string, fallbackDate?: string): string | undefined {
+  return resolveSleepProofDate(extractSleepProofDateEvidence(text), fallbackDate);
 }
 
 function extractSleepTimeline(text: string, totalSleepMinutes?: number): Pick<ExtractedSleepProofFields, "sleepStart" | "sleepEnd"> {
