@@ -51,6 +51,7 @@ interface LegacyScheduledPrompt extends Omit<NotificationIntent, "audience"> {
 export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
   private ready = false;
   private writeQueue: Promise<void> = Promise.resolve();
+  private submissionQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath: string) {
     super();
@@ -150,17 +151,21 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
   }
 
   override async saveSubmission(submission: RunSubmission): Promise<void> {
-    const previous = this.submissions.get(submission.id);
-    await super.saveSubmission(submission);
-    try {
-      await this.persist();
-    } catch (error) {
-      if (this.submissions.get(submission.id) === submission) {
-        if (previous) this.submissions.set(previous.id, previous);
-        else this.submissions.delete(submission.id);
+    const save = this.submissionQueue.then(async () => {
+      const previous = this.submissions.get(submission.id);
+      await super.saveSubmission(submission);
+      try {
+        await this.persist();
+      } catch (error) {
+        if (this.submissions.get(submission.id) === submission) {
+          if (previous) this.submissions.set(previous.id, previous);
+          else this.submissions.delete(submission.id);
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
+    this.submissionQueue = save.then(() => undefined, () => undefined);
+    await save;
   }
 
   override async saveSleepSubmission(submission: SleepSubmission): Promise<void> {

@@ -1754,6 +1754,46 @@ describe("ChallengeService", () => {
     equal(leaderboard[0]?.effectiveGoalKm, 42);
   });
 
+  it("does not persist a concurrently failed run submission", async () => {
+    const filePath = `.tmp/test-concurrent-runs-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
+    const repository = new JsonFileChallengeRepository(filePath);
+    await repository.init();
+    const persistence = repository as unknown as { persist: () => Promise<void> };
+    const persist = persistence.persist.bind(repository);
+    let writes = 0;
+    let firstWrite: Promise<void> | undefined;
+    persistence.persist = async () => {
+      writes += 1;
+      if (writes === 1) {
+        firstWrite = persist();
+        await firstWrite;
+        return;
+      }
+      await firstWrite;
+      throw new Error("simulated submission persistence failure");
+    };
+
+    const first = {
+      id: "run-1",
+      workspaceId: "workspace-1",
+      challengeId: "challenge-1",
+      memberId: "member-1",
+      sourceType: "proof_attachment" as const,
+      distanceKm: 5,
+      runDate: "2026-04-01",
+      status: "accepted" as const,
+      acceptedAt: "2026-04-01T12:00:00.000Z",
+    };
+    const second = { ...first, id: "run-2", distanceKm: 6 };
+    const outcomes = await Promise.allSettled([repository.saveSubmission(first), repository.saveSubmission(second)]);
+    deepEqual(outcomes.map((outcome) => outcome.status), ["fulfilled", "rejected"]);
+    deepEqual((await repository.listSubmissionsByChallenge("challenge-1")).map((run) => run.id), ["run-1"]);
+
+    const reloaded = new JsonFileChallengeRepository(filePath);
+    await reloaded.init();
+    deepEqual((await reloaded.listSubmissionsByChallenge("challenge-1")).map((run) => run.id), ["run-1"]);
+  });
+
   it("migrates legacy Discord snapshots into generic integrations and identities", async () => {
     const filePath = `.tmp/test-legacy-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
     await writeFile(filePath, JSON.stringify({
