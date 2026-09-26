@@ -181,19 +181,24 @@ describe("mobile API", () => {
     }
   });
 
-  it("closes the previous month in the squad timezone before applying carryover", async () => {
+  it("closes the previous month before an invitee joins and applies carryover", async () => {
     const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
     let clock = new Date("2026-09-30T12:00:00Z");
     const api = await startApi(directory, () => clock);
     try {
       const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
-      const { squad } = await created.json() as { squad: { id: string } };
+      const { squad, member } = await created.json() as { squad: { id: string }; member: { id: string } };
       const path = `/v1/squads/${encodeURIComponent(squad.id)}`;
       equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10 })).status, 200);
+      const invite = await request(api, ALICE_TOKEN, "POST", `${path}/invites`);
+      const { inviteCode } = await invite.json() as { inviteCode: string };
       clock = new Date("2026-09-30T15:00:00Z");
+      equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode, displayName: "Bob" })).status, 200);
       const summary = await request(api, ALICE_TOKEN, "GET", `${path}/summary`);
       equal(((await summary.json()) as { month: string }).month, "2026-10");
-      equal((await api.repository.getChallengeByMonth(squad.id, "2026-09"))?.closedAt, "2026-09-30T15:00:00.000Z");
+      const previous = await api.repository.getChallengeByMonth(squad.id, "2026-09");
+      equal(previous?.closedAt, "2026-09-30T15:00:00.000Z");
+      deepEqual((await api.repository.listMonthlyResultsByChallenge(previous!.id)).map((result) => result.memberId), [member.id]);
       equal((await api.repository.getChallengeByMonth(squad.id, "2026-10"))?.createdAt, "2026-09-30T15:00:00.000Z");
       const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10 });
       const effective = await goal.json() as { carryoverKm: number; effectiveGoalKm: number };

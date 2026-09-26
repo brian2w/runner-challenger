@@ -51,7 +51,7 @@ interface LegacyScheduledPrompt extends Omit<NotificationIntent, "audience"> {
 export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
   private ready = false;
   private writeQueue: Promise<void> = Promise.resolve();
-  private submissionQueue: Promise<void> = Promise.resolve();
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath: string) {
     super();
@@ -116,86 +116,84 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
   }
 
   override async saveWorkspace(workspace: Workspace): Promise<void> {
-    await super.saveWorkspace(workspace);
-    await this.persist();
+    await this.persistMutation(() => super.saveWorkspace(workspace));
   }
 
   override async saveMember(member: Member): Promise<void> {
-    await super.saveMember(member);
-    await this.persist();
+    await this.persistMutation(() => super.saveMember(member));
   }
 
   override async saveWorkspaceIntegration(integration: WorkspaceIntegration): Promise<void> {
-    await super.saveWorkspaceIntegration(integration);
-    await this.persist();
+    await this.persistMutation(() => super.saveWorkspaceIntegration(integration));
   }
 
   override async saveMemberIdentity(identity: MemberIdentity): Promise<void> {
-    await super.saveMemberIdentity(identity);
-    await this.persist();
+    await this.persistMutation(() => super.saveMemberIdentity(identity));
   }
 
   override async saveChallenge(challenge: MonthlyChallenge): Promise<void> {
-    await super.saveChallenge(challenge);
-    await this.persist();
+    await this.persistMutation(() => super.saveChallenge(challenge));
   }
 
   override async saveLeaderAssignment(assignment: LeaderAssignment): Promise<void> {
-    await super.saveLeaderAssignment(assignment);
-    await this.persist();
+    await this.persistMutation(() => super.saveLeaderAssignment(assignment));
   }
 
   override async saveGoal(goal: MonthlyGoal): Promise<void> {
-    await super.saveGoal(goal);
-    await this.persist();
+    await this.persistMutation(() => super.saveGoal(goal));
   }
 
   override async saveSubmission(submission: RunSubmission): Promise<void> {
-    const save = this.submissionQueue.then(async () => {
-      const previous = this.submissions.get(submission.id);
-      await super.saveSubmission(submission);
+    let previous: RunSubmission | undefined;
+    await this.persistMutation(
+      async () => {
+        previous = this.submissions.get(submission.id);
+        await super.saveSubmission(submission);
+      },
+      () => {
+        if (this.submissions.get(submission.id) !== submission) return;
+        if (previous) this.submissions.set(previous.id, previous);
+        else this.submissions.delete(submission.id);
+      },
+    );
+  }
+
+  private async persistMutation(mutate: () => Promise<void>, rollback?: () => void): Promise<void> {
+    const save = this.mutationQueue.then(async () => {
+      await mutate();
       try {
         await this.persist();
       } catch (error) {
-        if (this.submissions.get(submission.id) === submission) {
-          if (previous) this.submissions.set(previous.id, previous);
-          else this.submissions.delete(submission.id);
-        }
+        rollback?.();
         throw error;
       }
     });
-    this.submissionQueue = save.then(() => undefined, () => undefined);
+    this.mutationQueue = save.then(() => undefined, () => undefined);
     await save;
   }
 
   override async saveSleepSubmission(submission: SleepSubmission): Promise<void> {
-    await super.saveSleepSubmission(submission);
-    await this.persist();
+    await this.persistMutation(() => super.saveSleepSubmission(submission));
   }
 
   override async saveCarryoverPenalty(penalty: CarryoverPenalty): Promise<void> {
-    await super.saveCarryoverPenalty(penalty);
-    await this.persist();
+    await this.persistMutation(() => super.saveCarryoverPenalty(penalty));
   }
 
   override async saveMonthlyResult(result: MonthlyResult): Promise<void> {
-    await super.saveMonthlyResult(result);
-    await this.persist();
+    await this.persistMutation(() => super.saveMonthlyResult(result));
   }
 
   override async savePunishmentRecord(record: PunishmentRecord): Promise<void> {
-    await super.savePunishmentRecord(record);
-    await this.persist();
+    await this.persistMutation(() => super.savePunishmentRecord(record));
   }
 
   override async deletePunishmentRecord(punishmentId: string): Promise<void> {
-    await super.deletePunishmentRecord(punishmentId);
-    await this.persist();
+    await this.persistMutation(() => super.deletePunishmentRecord(punishmentId));
   }
 
   override async saveNotificationIntent(intent: NotificationIntent): Promise<void> {
-    await super.saveNotificationIntent(intent);
-    await this.persist();
+    await this.persistMutation(() => super.saveNotificationIntent(intent));
   }
 
   private loadMap<T extends { id: string }>(target: Map<string, T>, records: T[] | undefined): void {

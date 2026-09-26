@@ -243,8 +243,8 @@ export function createMobileApi(options: MobileApiOptions) {
       }
       const workspace = await options.repository.getWorkspaceById(invitation.workspaceId);
       if (!workspace) throw new ApiError(404, "Invite not found or expired.");
-      const member = await service.registerMember({ workspaceId: workspace.id, displayName, platform: MOBILE_PLATFORM, externalUserId: actor });
       await ensureMonth(workspace);
+      const member = await service.registerMember({ workspaceId: workspace.id, displayName, platform: MOBILE_PLATFORM, externalUserId: actor });
       sendJson(response, 200, { squad: workspace, member: { id: member.id, displayName: member.displayName } });
       return;
     }

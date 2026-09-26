@@ -1794,6 +1794,46 @@ describe("ChallengeService", () => {
     deepEqual((await reloaded.listSubmissionsByChallenge("challenge-1")).map((run) => run.id), ["run-1"]);
   });
 
+  it("does not persist a failed run through a concurrent workspace save", async () => {
+    const filePath = `.tmp/test-mixed-runs-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
+    const repository = new JsonFileChallengeRepository(filePath);
+    await repository.init();
+    const persistence = repository as unknown as { persist: () => Promise<void> };
+    const persist = persistence.persist.bind(repository);
+    let writes = 0;
+    let firstWrite: Promise<void> | undefined;
+    persistence.persist = async () => {
+      writes += 1;
+      if (writes === 1) {
+        firstWrite = persist();
+        await firstWrite;
+        return;
+      }
+      await firstWrite;
+      throw new Error("simulated submission persistence failure");
+    };
+
+    const workspace = { id: "workspace-1", name: "Squad", timezone: "UTC", createdAt: "2026-04-01T12:00:00.000Z" };
+    const run = {
+      id: "run-1",
+      workspaceId: workspace.id,
+      challengeId: "challenge-1",
+      memberId: "member-1",
+      sourceType: "proof_attachment" as const,
+      distanceKm: 5,
+      runDate: "2026-04-01",
+      status: "accepted" as const,
+      acceptedAt: "2026-04-01T12:00:00.000Z",
+    };
+    const outcomes = await Promise.allSettled([repository.saveWorkspace(workspace), repository.saveSubmission(run)]);
+    deepEqual(outcomes.map((outcome) => outcome.status), ["fulfilled", "rejected"]);
+    deepEqual((await repository.listSubmissionsByChallenge("challenge-1")).map((item) => item.id), []);
+
+    const reloaded = new JsonFileChallengeRepository(filePath);
+    await reloaded.init();
+    deepEqual((await reloaded.listSubmissionsByChallenge("challenge-1")).map((item) => item.id), []);
+  });
+
   it("migrates legacy Discord snapshots into generic integrations and identities", async () => {
     const filePath = `.tmp/test-legacy-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
     await writeFile(filePath, JSON.stringify({
