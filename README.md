@@ -12,6 +12,7 @@ For the architecture and agent-facing user-flow map, see [docs/CONTEXT.md](docs/
 - Runs a proof-backed weekly Garmin sleep challenge with public normalized scores and private stage insights.
 - Persists state to a JSON file so the bot survives restarts.
 - Keeps the challenge core independent from Discord so a later web app can reuse the same service layer.
+- Offers a local-only mobile API for testing account-scoped squads with the same challenge service. See [docs/MOBILE_API.md](docs/MOBILE_API.md).
 
 ## Commands
 
@@ -122,6 +123,8 @@ TESSERACT_LANGUAGE=eng
 Default storage is `.tmp/runner-challenger.json`. Set `DATA_FILE` to use a different location.
 
 The JSON repository is intentionally simple for MVP testing. If the group keeps using the bot, the next durability step is swapping `ChallengeRepository` to SQLite or Postgres without changing the challenge service.
+
+The mobile API uses separate data files and proof storage by default. Its static test tokens and serialized JSON writes support a single local process for demos; they are not a hosted account service. See [Mobile API setup and contract](docs/MOBILE_API.md).
 
 ## Access Notes
 

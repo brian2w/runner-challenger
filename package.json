@@ -9,7 +9,8 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/tests/**/*.test.js",
     "dry-run": "npm run build && node dist/src/dryRun.js",
-    "start": "npm run build && node dist/src/index.js"
+    "start": "npm run build && node dist/src/index.js",
+    "api:start": "npm run build && node dist/src/mobileApi/server.js"
   },
   "dependencies": {
     "discord.js": "^14.26.4",

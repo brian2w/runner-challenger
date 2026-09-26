@@ -150,8 +150,17 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
   }
 
   override async saveSubmission(submission: RunSubmission): Promise<void> {
+    const previous = this.submissions.get(submission.id);
     await super.saveSubmission(submission);
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      if (this.submissions.get(submission.id) === submission) {
+        if (previous) this.submissions.set(previous.id, previous);
+        else this.submissions.delete(submission.id);
+      }
+      throw error;
+    }
   }
 
   override async saveSleepSubmission(submission: SleepSubmission): Promise<void> {
@@ -248,7 +257,7 @@ export class JsonFileChallengeRepository extends InMemoryChallengeRepository {
         notificationIntents: [...this.notificationIntents.values()],
       };
       const tempPath = `${this.filePath}.writing`;
-      await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+      await writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
       await rename(tempPath, this.filePath);
     });
     this.writeQueue = write;
