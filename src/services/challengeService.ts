@@ -50,6 +50,7 @@ type LegacyDiscordWorkspaceInput = {
 export class ChallengeService {
   private readonly memberRegistrationLocks = new Map<string, Promise<Member>>();
   private readonly workspaceIntegrationLocks = new Map<string, Promise<Workspace>>();
+  private readonly monthStartLocks = new Map<string, Promise<MonthlyChallenge>>();
   constructor(
     private readonly repository: ChallengeRepository,
     private readonly runtime: MomentumRuntime = systemMomentumRuntime,
@@ -286,6 +287,20 @@ export class ChallengeService {
   }
 
   async startMonth(input: { workspaceId: string; month: MonthKey }): Promise<MonthlyChallenge> {
+    const key = `${input.workspaceId}:${input.month}`;
+    const activeStart = this.monthStartLocks.get(key);
+    if (activeStart) return activeStart;
+
+    const start = this.startMonthOnce(input);
+    this.monthStartLocks.set(key, start);
+    try {
+      return await start;
+    } finally {
+      if (this.monthStartLocks.get(key) === start) this.monthStartLocks.delete(key);
+    }
+  }
+
+  private async startMonthOnce(input: { workspaceId: string; month: MonthKey }): Promise<MonthlyChallenge> {
     await this.requireWorkspace(input.workspaceId);
     const existing = await this.repository.getChallengeByMonth(input.workspaceId, input.month);
     if (existing) {

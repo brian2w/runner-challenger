@@ -1754,6 +1754,20 @@ describe("ChallengeService", () => {
     equal(leaderboard[0]?.effectiveGoalKm, 42);
   });
 
+  it("shares one challenge across concurrent JSON month starts", async () => {
+    const filePath = `.tmp/test-concurrent-month-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
+    const repository = new JsonFileChallengeRepository(filePath);
+    await repository.init();
+    const service = new ChallengeService(repository);
+    const workspace = await service.createWorkspace({ name: "Squad", timezone: "UTC" });
+    const input = { workspaceId: workspace.id, month: createMonthKey(2026, 4) };
+
+    const [first, second] = await Promise.all([service.startMonth(input), service.startMonth(input)]);
+    equal(first.id, second.id);
+    const snapshot = JSON.parse(await readFile(filePath, "utf8")) as { challenges: { id: string }[] };
+    deepEqual(snapshot.challenges.map((challenge) => challenge.id), [first.id]);
+  });
+
   it("does not persist a concurrently failed run submission", async () => {
     const filePath = `.tmp/test-concurrent-runs-${Date.now()}-${Math.random().toString(16).slice(2)}.json`;
     const repository = new JsonFileChallengeRepository(filePath);
