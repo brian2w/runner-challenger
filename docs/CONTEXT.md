@@ -9,6 +9,7 @@ Read this before changing user-facing behavior. This is an orientation map, not 
 | Momentum core | Platform-neutral domain types, rules, services, and repository port | `src/momentum/index.ts` |
 | Persistence | In-memory test repository and durable JSON implementation | `src/repositories/` |
 | Discord adapter | Slash commands, permissions, attachments, OCR, buttons, and rendering | `src/adapters/discord/` |
+| Mobile API adapter | Local test-token authentication, squad access, private proof files, and HTTP responses | `src/mobileApi/` |
 | User flow map | Intentional user-visible behavior and non-negotiable rules | `docs/USER_FLOWS.md` |
 
 The core must not import Discord. A future web app or Garmin sync adapter should call `ChallengeService` or `SleepService`, rather than duplicate their rules.
@@ -21,6 +22,7 @@ The core must not import Discord. A future web app or Garmin sync adapter should
 | Run goals, submissions, carryovers, or monthly standings | `ChallengeService` and `core/calculations.ts` |
 | Sleep submission, score, standings, or insights | `SleepService` |
 | Persisted data | `ChallengeRepository` plus both repository implementations |
+| Mobile API contract and local invite records | `docs/MOBILE_API.md` and `src/mobileApi/` |
 | Discord copy or privacy | `DiscordPresenter` and the relevant Discord flow |
 
 ## Documentation contract
