@@ -84,7 +84,8 @@ describe("mobile API", () => {
 
   it("persists idempotent runs and only serves proofs to the uploader", async () => {
     const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
-    let api = await startApi(directory, () => new Date("2026-10-04T02:00:00Z"));
+    let clock = new Date("2026-10-04T02:00:00Z");
+    let api = await startApi(directory, () => clock);
     try {
       const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
       const { squad } = await created.json() as { squad: { id: string } };
@@ -102,6 +103,13 @@ describe("mobile API", () => {
       deepEqual([logged.status, concurrentRetry.status].sort(), [200, 201]);
       const { run } = await logged.json() as { run: { id: string; acceptedAt: string } };
       equal(run.acceptedAt, "2026-10-04T02:00:00.000Z");
+      const receiptPath = `${squadPath}/runs/receipt?month=2026-10&clientRunId=run-alice-001`;
+      const receipt = await request(api, ALICE_TOKEN, "GET", receiptPath);
+      equal(receipt.status, 200);
+      equal(((await receipt.json()) as { run: { id: string } }).run.id, run.id);
+      deepEqual(await (await request(api, BOB_TOKEN, "GET", receiptPath)).json(), { run: null });
+      equal((await request(api, CHARLIE_TOKEN, "GET", receiptPath)).status, 404);
+      equal((await request(api, ALICE_TOKEN, "GET", `${squadPath}/runs/receipt?month=2026-10&clientRunId=bad`)).status, 400);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, body)).status, 200);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, { ...body, distanceKm: 6 })).status, 409);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, { ...body, clientRunId: "run-future-001", runDate: "2026-10-05" })).status, 400);
@@ -117,9 +125,14 @@ describe("mobile API", () => {
       equal(snapshot.runs.length, 1);
       ok(!JSON.stringify(snapshot).includes("mobile-proof:"));
       await api.close();
-      api = await startApi(directory, () => new Date("2026-10-04T02:00:00Z"));
+      api = await startApi(directory, () => clock);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, body)).status, 200);
       equal((await request(api, ALICE_TOKEN, "GET", proofPath)).status, 200);
+      clock = new Date("2026-11-01T02:00:00Z");
+      equal(((await (await request(api, ALICE_TOKEN, "GET", `${squadPath}/summary`)).json()) as { month: string }).month, "2026-11");
+      const priorReceipt = await request(api, ALICE_TOKEN, "GET", receiptPath);
+      equal(((await priorReceipt.json()) as { run: { id: string } }).run.id, run.id);
+      deepEqual(await (await request(api, ALICE_TOKEN, "GET", `${squadPath}/runs/receipt?month=2026-10&clientRunId=run-missing-001`)).json(), { run: null });
       const persisted = await readFile(join(directory, "challenge.json"), "utf8");
       match(persisted, /Morning run/);
     } finally {

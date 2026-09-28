@@ -139,6 +139,10 @@ function publicRun(run: RunSubmission): JsonObject {
   };
 }
 
+function runProofDigest(workspaceId: string, memberId: string, month: MonthKey, clientRunId: string): string {
+  return createHash("sha256").update(JSON.stringify([workspaceId, memberId, month, clientRunId])).digest("hex");
+}
+
 export function createMobileApi(options: MobileApiOptions) {
   const now = options.now ?? (() => new Date());
   const service = new ChallengeService(options.repository, {
@@ -270,6 +274,20 @@ export function createMobileApi(options: MobileApiOptions) {
       sendJson(response, 200, await summary(workspace, member));
       return;
     }
+    if (request.method === "GET" && path.length === 5 && path[3] === "runs" && path[4] === "receipt") {
+      const month = url.searchParams.get("month");
+      const clientRunId = url.searchParams.get("clientRunId");
+      if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) ||
+        !clientRunId || !/^[A-Za-z0-9_-]{8,80}$/.test(clientRunId)) {
+        throw new ApiError(400, "month and clientRunId are required for a run receipt.");
+      }
+      const challenge = await options.repository.getChallengeByMonth(workspaceId, month as MonthKey);
+      const digest = runProofDigest(workspaceId, member.id, month as MonthKey, clientRunId);
+      const run = challenge && (await options.repository.listSubmissionsByChallenge(challenge.id))
+        .find((item) => item.memberId === member.id && item.evidenceUrl?.startsWith(`mobile-proof:${digest}.`));
+      sendJson(response, 200, { run: run && run.status !== "removed" ? publicRun(run) : null });
+      return;
+    }
     if (request.method === "PUT" && path.length === 4 && path[3] === "goal") {
       const body = await readJson(request);
       const baseGoalKm = requiredDistance(body, "baseGoalKm");
@@ -289,7 +307,7 @@ export function createMobileApi(options: MobileApiOptions) {
       const { bytes, extension } = proofBytes(body);
       const month = await ensureMonth(workspace);
       const challenge = (await options.repository.getChallengeByMonth(workspaceId, month))!;
-      const digest = createHash("sha256").update(JSON.stringify([workspaceId, member.id, month, clientRunId])).digest("hex");
+      const digest = runProofDigest(workspaceId, member.id, month, clientRunId);
       const existing = (await options.repository.listSubmissionsByChallenge(challenge.id)).find((run) => run.memberId === member.id && run.evidenceUrl?.startsWith(`mobile-proof:${digest}.`));
       if (existing) {
         const priorName = existing.evidenceUrl!.slice("mobile-proof:".length);
