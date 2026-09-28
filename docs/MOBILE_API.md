@@ -30,6 +30,7 @@ All `/v1` requests require `Authorization: Bearer <token>`. Bodies are JSON with
 | GET | `/v1/squads/:id/summary` | - | `squad`, `month`, `member`, `personal`, `group`, `leaderboard`, `runs` |
 | PUT | `/v1/squads/:id/goal` | `{ "baseGoalKm" }` | Saves the signed-in member's goal and returns the effective goal |
 | POST | `/v1/squads/:id/runs` | See below | Logs one proof-backed run |
+| GET | `/v1/squads/:id/runs/receipt?month=YYYY-MM&clientRunId=...` | - | The signed-in member's matching run, or `{ "run": null }` |
 | GET | `/v1/squads/:id/runs/:runId/proof` | - | Screenshot bytes for the uploader only |
 
 `timezone` must be an IANA timezone such as `Australia/Sydney`. The server chooses the challenge month and current date in that timezone. On the first request after a month changes, it closes the immediately previous open month before starting the new one. A squad inactive for multiple whole months needs a later catch-up workflow.
@@ -50,6 +51,8 @@ Invites are separate from workspace IDs. A code has 128 random bits, is stored o
 ```
 
 `clientRunId` is a stable 8 to 80 character identifier generated once per mobile run and reused on retries. An identical retry returns 200 and the original run; the first accepted request returns 201. The ID is scoped to the signed-in member, squad, and month. Distance must be 0.01 to 500 km with at most two decimals. The date must be valid, in the current squad month, and no later than today in the squad timezone. Proof must be JPEG, PNG, or WebP and at most 5 MB decoded; the JSON body limit is 7 MB. OCR is not included in this API slice.
+
+The receipt lookup works after a month closes. It lets a client resolve a lost POST response without resubmitting an old-month run. A missing receipt returns `{ "run": null }`; it never returns another member's run or proof bytes.
 
 The response is `{ "run": { "id", "memberId", "distanceKm", "runDate", "note", "status", "acceptedAt", "hasProof" } }`. The summary includes other members' run details and standings but never proof paths or image bytes. Only the uploader can read the proof endpoint. Images are stored in a private directory, never a public static route.
 
