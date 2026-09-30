@@ -131,19 +131,32 @@ describe("mobile API", () => {
   it("revokes and expires invite codes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
     let clock = new Date("2026-10-04T02:00:00Z");
-    const api = await startApi(directory, () => clock);
+    let api = await startApi(directory, () => clock);
     try {
       const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
       const { squad } = await created.json() as { squad: { id: string } };
       const path = `/v1/squads/${encodeURIComponent(squad.id)}/invites`;
-      const first = await request(api, ALICE_TOKEN, "POST", path);
-      const { inviteCode: revokedCode } = await first.json() as { inviteCode: string };
+      const first = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(first.status, 201);
+      const issued = await first.json() as { inviteCode: string; expiresAt: string };
+      const { inviteCode: revokedCode } = issued;
+      const retry = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(retry.status, 200);
+      deepEqual(await retry.json(), issued);
+      await api.close();
+      api = await startApi(directory, () => clock);
+      const afterRestart = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(afterRestart.status, 200);
+      deepEqual(await afterRestart.json(), issued);
+      equal((await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "short" })).status, 400);
       equal((await request(api, BOB_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 404);
       equal((await request(api, ALICE_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 200);
+      equal((await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" })).status, 409);
       equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode: revokedCode, displayName: "Bob" })).status, 404);
-      const second = await request(api, ALICE_TOKEN, "POST", path);
+      const second = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-002" });
       const { inviteCode: expiredCode } = await second.json() as { inviteCode: string };
       clock = new Date(clock.getTime() + 24 * 60 * 60 * 1000);
+      equal((await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-002" })).status, 409);
       equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode: expiredCode, displayName: "Bob" })).status, 404);
     } finally {
       await api.close();

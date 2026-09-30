@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -148,13 +148,13 @@ export function createMobileApi(options: MobileApiOptions) {
   const preparedMonths = new Set<string>();
   let queue: Promise<void> = Promise.resolve();
 
-  function actorFor(request: IncomingMessage): string {
+  function actorFor(request: IncomingMessage): { actor: string; token: string } {
     const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(request.headers.authorization ?? "");
     if (!match) throw new ApiError(401, "Bearer token required.");
     const supplied = Buffer.from(match[1]);
     for (const [token, accountId] of options.users) {
       const candidate = Buffer.from(token);
-      if (candidate.length === supplied.length && timingSafeEqual(candidate, supplied)) return accountId;
+      if (candidate.length === supplied.length && timingSafeEqual(candidate, supplied)) return { actor: accountId, token: match[1] };
     }
     throw new ApiError(401, "Invalid bearer token.");
   }
@@ -210,7 +210,7 @@ export function createMobileApi(options: MobileApiOptions) {
       sendJson(response, 200, { ok: true });
       return;
     }
-    const actor = actorFor(request);
+    const { actor, token } = actorFor(request);
     if (request.method === "GET" && url.pathname === "/v1/me") {
       const squads = [];
       for (const workspace of await options.repository.listWorkspaces()) {
@@ -252,7 +252,22 @@ export function createMobileApi(options: MobileApiOptions) {
     const workspaceId = path[2];
     const { workspace, member } = await membership(workspaceId, actor);
     if (request.method === "POST" && path.length === 4 && path[3] === "invites") {
-      const inviteCode = randomBytes(16).toString("base64url");
+      const clientInviteId = request.headers["content-type"]?.startsWith("application/json")
+        ? requiredString(await readJson(request), "clientInviteId", 80) : null;
+      if (clientInviteId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientInviteId)) {
+        throw new ApiError(400, "clientInviteId must use 8 to 80 letters, digits, hyphens, or underscores.");
+      }
+      const inviteCode = clientInviteId
+        ? createHmac("sha256", token).update(JSON.stringify(["momentum-invite-v1", actor, workspaceId, clientInviteId])).digest().subarray(0, 16).toString("base64url")
+        : randomBytes(16).toString("base64url");
+      const existing = await options.inviteStore.get(inviteCode);
+      if (existing) {
+        if (existing.workspaceId !== workspaceId || existing.revokedAt || now().getTime() >= Date.parse(existing.expiresAt)) {
+          throw new ApiError(409, "This invite request has expired or been revoked. Start a new invite.");
+        }
+        sendJson(response, 200, { inviteCode, expiresAt: existing.expiresAt });
+        return;
+      }
       const expiresAt = new Date(now().getTime() + INVITE_LIFETIME_MS).toISOString();
       await options.inviteStore.save({ codeHash: hashInviteCode(inviteCode), workspaceId, expiresAt });
       sendJson(response, 201, { inviteCode, expiresAt });
