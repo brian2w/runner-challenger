@@ -148,6 +148,8 @@ describe("mobile API", () => {
       const afterRestart = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
       equal(afterRestart.status, 200);
       deepEqual(await afterRestart.json(), issued);
+      equal((await request(api, ALICE_TOKEN, "POST", path, {})).status, 201);
+      equal((await fetch(`${api.baseUrl}${path}`, { method: "POST", headers: { Authorization: `Bearer ${ALICE_TOKEN}`, "Content-Type": "application/json" } })).status, 201);
       equal((await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "short" })).status, 400);
       equal((await request(api, BOB_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 404);
       equal((await request(api, ALICE_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 200);

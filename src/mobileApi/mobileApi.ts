@@ -76,7 +76,7 @@ function validTimezone(timezone: string): boolean {
   }
 }
 
-async function readJson(request: IncomingMessage): Promise<JsonObject> {
+async function readJson(request: IncomingMessage, allowEmpty = false): Promise<JsonObject> {
   if (!request.headers["content-type"]?.startsWith("application/json")) {
     throw new ApiError(415, "Content-Type must be application/json.");
   }
@@ -92,9 +92,11 @@ async function readJson(request: IncomingMessage): Promise<JsonObject> {
     if (total > MAX_JSON_BYTES) throw new ApiError(413, "Request body is too large.");
     chunks.push(bytes);
   }
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (allowEmpty && !raw.trim()) return {};
   let value: unknown;
   try {
-    value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    value = JSON.parse(raw);
   } catch {
     throw new ApiError(400, "Request body must be valid JSON.");
   }
@@ -252,8 +254,8 @@ export function createMobileApi(options: MobileApiOptions) {
     const workspaceId = path[2];
     const { workspace, member } = await membership(workspaceId, actor);
     if (request.method === "POST" && path.length === 4 && path[3] === "invites") {
-      const clientInviteId = request.headers["content-type"]?.startsWith("application/json")
-        ? requiredString(await readJson(request), "clientInviteId", 80) : null;
+      const body = request.headers["content-type"]?.startsWith("application/json") ? await readJson(request, true) : {};
+      const clientInviteId = body.clientInviteId === undefined ? null : requiredString(body, "clientInviteId", 80);
       if (clientInviteId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientInviteId)) {
         throw new ApiError(400, "clientInviteId must use 8 to 80 letters, digits, hyphens, or underscores.");
       }
