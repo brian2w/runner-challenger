@@ -215,7 +215,11 @@ describe("mobile API", () => {
       equal(previous?.closedAt, "2026-09-30T15:00:00.000Z");
       deepEqual((await api.repository.listMonthlyResultsByChallenge(previous!.id)).map((result) => result.memberId), [member.id]);
       equal((await api.repository.getChallengeByMonth(squad.id, "2026-10"))?.createdAt, "2026-09-30T15:00:00.000Z");
-      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10 });
+      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-13" })).status, 400);
+      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-09" })).status, 409);
+      const beforeGoal = await request(api, ALICE_TOKEN, "GET", `${path}/summary`);
+      equal(((await beforeGoal.json()) as { personal: { hasGoal: boolean } }).personal.hasGoal, false);
+      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-10" });
       const effective = await goal.json() as { carryoverKm: number; effectiveGoalKm: number };
       equal(effective.carryoverKm, 11.5);
       equal(effective.effectiveGoalKm, 21.5);

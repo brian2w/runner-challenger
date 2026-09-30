@@ -290,7 +290,15 @@ export function createMobileApi(options: MobileApiOptions) {
     if (request.method === "PUT" && path.length === 4 && path[3] === "goal") {
       const body = await readJson(request);
       const baseGoalKm = requiredDistance(body, "baseGoalKm");
-      const goal = await service.setGoal({ workspaceId, month: await ensureMonth(workspace), memberId: member.id, baseGoalKm });
+      const expectedMonth = body.expectedMonth === undefined ? null : requiredString(body, "expectedMonth", 7);
+      if (expectedMonth && !/^\d{4}-(0[1-9]|1[0-2])$/.test(expectedMonth)) {
+        throw new ApiError(400, "expectedMonth must be a YYYY-MM month.");
+      }
+      const month = await ensureMonth(workspace);
+      if (expectedMonth && expectedMonth !== month) {
+        throw new ApiError(409, "The squad month changed. Refresh your goal before saving.");
+      }
+      const goal = await service.setGoal({ workspaceId, month, memberId: member.id, baseGoalKm });
       sendJson(response, 200, goal);
       return;
     }
