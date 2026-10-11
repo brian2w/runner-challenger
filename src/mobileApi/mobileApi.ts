@@ -48,10 +48,10 @@ function requiredString(body: JsonObject, key: string, maxLength: number): strin
   return value.trim();
 }
 
-function requiredDistance(body: JsonObject, key: string): number {
+function requiredDistance(body: JsonObject, key: string, maxKm: number): number {
   const value = body[key];
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0.01 || value > 500 || Math.abs(Math.round(value * 100) - value * 100) > 1e-7) {
-    throw new ApiError(400, `${key} must be between 0.01 and 500 km with at most two decimal places.`);
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0.01 || value > maxKm || Math.abs(Math.round(value * 100) - value * 100) > 1e-7) {
+    throw new ApiError(400, `${key} must be between 0.01 and ${maxKm} km with at most two decimal places.`);
   }
   return value;
 }
@@ -290,7 +290,7 @@ export function createMobileApi(options: MobileApiOptions) {
     }
     if (request.method === "PUT" && path.length === 4 && path[3] === "goal") {
       const body = await readJson(request);
-      const baseGoalKm = requiredDistance(body, "baseGoalKm");
+      const baseGoalKm = requiredDistance(body, "baseGoalKm", 2000);
       const goal = await service.setGoal({ workspaceId, month: await ensureMonth(workspace), memberId: member.id, baseGoalKm });
       sendJson(response, 200, goal);
       return;
@@ -299,7 +299,7 @@ export function createMobileApi(options: MobileApiOptions) {
       const body = await readJson(request);
       const clientRunId = requiredString(body, "clientRunId", 80);
       if (!/^[A-Za-z0-9_-]{8,80}$/.test(clientRunId)) throw new ApiError(400, "clientRunId must use 8 to 80 letters, digits, hyphens, or underscores.");
-      const distanceKm = requiredDistance(body, "distanceKm");
+      const distanceKm = requiredDistance(body, "distanceKm", 500);
       const runDate = requiredString(body, "runDate", 10);
       if (runDate > timezoneDate(now(), workspace.timezone)) throw new ApiError(400, "runDate cannot be in the future.");
       const note = body.note === undefined ? "" : body.note;
