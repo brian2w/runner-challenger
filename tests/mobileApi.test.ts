@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { MemberMonthStatus, MonthlyGoal } from "../src/core/types.js";
 import { hashInviteCode, JsonInviteStore } from "../src/mobileApi/inviteStore.js";
 import { createMobileApi, parseApiUsers } from "../src/mobileApi/mobileApi.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
@@ -83,9 +84,39 @@ describe("mobile API", () => {
     }
   });
 
+  it("limits monthly base goals without changing a saved goal on rejection", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
+    const api = await startApi(directory, () => new Date("2026-10-04T02:00:00Z"));
+    try {
+      const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
+      const { squad } = await created.json() as { squad: { id: string } };
+      const squadPath = `/v1/squads/${encodeURIComponent(squad.id)}`;
+      for (const baseGoalKm of [0.01, 1999.99, 2000]) {
+        const goal = await request(api, ALICE_TOKEN, "PUT", `${squadPath}/goal`, { baseGoalKm });
+        equal(goal.status, 200);
+        const saved = await goal.json() as MonthlyGoal;
+        equal(saved.baseGoalKm, baseGoalKm);
+        equal(saved.carryoverKm, 0);
+        equal(saved.effectiveGoalKm, baseGoalKm);
+      }
+      for (const baseGoalKm of [0, 2000.01, 1000.001]) {
+        equal((await request(api, ALICE_TOKEN, "PUT", `${squadPath}/goal`, { baseGoalKm })).status, 400);
+        const summary = await request(api, ALICE_TOKEN, "GET", `${squadPath}/summary`);
+        equal(summary.status, 200);
+        const { personal } = await summary.json() as { personal: MemberMonthStatus };
+        equal(personal.baseGoalKm, 2000);
+        equal(personal.effectiveGoalKm, 2000);
+      }
+    } finally {
+      await api.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("persists idempotent runs and only serves proofs to the uploader", async () => {
     const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
-    let api = await startApi(directory, () => new Date("2026-10-04T02:00:00Z"));
+    let clock = new Date("2026-10-04T02:00:00Z");
+    let api = await startApi(directory, () => clock);
     try {
       const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
       const { squad } = await created.json() as { squad: { id: string } };
@@ -103,9 +134,17 @@ describe("mobile API", () => {
       deepEqual([logged.status, concurrentRetry.status].sort(), [200, 201]);
       const { run } = await logged.json() as { run: { id: string; acceptedAt: string } };
       equal(run.acceptedAt, "2026-10-04T02:00:00.000Z");
+      const receiptPath = `${squadPath}/runs/receipt?month=2026-10&clientRunId=run-alice-001`;
+      const receipt = await request(api, ALICE_TOKEN, "GET", receiptPath);
+      equal(receipt.status, 200);
+      equal(((await receipt.json()) as { run: { id: string } }).run.id, run.id);
+      deepEqual(await (await request(api, BOB_TOKEN, "GET", receiptPath)).json(), { run: null });
+      equal((await request(api, CHARLIE_TOKEN, "GET", receiptPath)).status, 404);
+      equal((await request(api, ALICE_TOKEN, "GET", `${squadPath}/runs/receipt?month=2026-10&clientRunId=bad`)).status, 400);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, body)).status, 200);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, { ...body, distanceKm: 6 })).status, 409);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, { ...body, clientRunId: "run-future-001", runDate: "2026-10-05" })).status, 400);
+      equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, { ...body, clientRunId: "run-too-long-001", distanceKm: 500.01 })).status, 400);
       const proofPath = `${squadPath}/runs/${run.id}/proof`;
       equal((await request(api, BOB_TOKEN, "GET", proofPath)).status, 404);
       const proof = await request(api, ALICE_TOKEN, "GET", proofPath);
@@ -118,9 +157,14 @@ describe("mobile API", () => {
       equal(snapshot.runs.length, 1);
       ok(!JSON.stringify(snapshot).includes("mobile-proof:"));
       await api.close();
-      api = await startApi(directory, () => new Date("2026-10-04T02:00:00Z"));
+      api = await startApi(directory, () => clock);
       equal((await request(api, ALICE_TOKEN, "POST", `${squadPath}/runs`, body)).status, 200);
       equal((await request(api, ALICE_TOKEN, "GET", proofPath)).status, 200);
+      clock = new Date("2026-11-01T02:00:00Z");
+      equal(((await (await request(api, ALICE_TOKEN, "GET", `${squadPath}/summary`)).json()) as { month: string }).month, "2026-11");
+      const priorReceipt = await request(api, ALICE_TOKEN, "GET", receiptPath);
+      equal(((await priorReceipt.json()) as { run: { id: string } }).run.id, run.id);
+      deepEqual(await (await request(api, ALICE_TOKEN, "GET", `${squadPath}/runs/receipt?month=2026-10&clientRunId=run-missing-001`)).json(), { run: null });
       const persisted = await readFile(join(directory, "challenge.json"), "utf8");
       match(persisted, /Morning run/);
     } finally {
@@ -253,13 +297,15 @@ describe("mobile API", () => {
       deepEqual((await api.repository.listMonthlyResultsByChallenge(previous!.id)).map((result) => result.memberId), [member.id]);
       equal((await api.repository.getChallengeByMonth(squad.id, "2026-10"))?.createdAt, "2026-09-30T15:00:00.000Z");
       equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-13" })).status, 400);
-      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-09" })).status, 409);
+      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 2000, expectedMonth: "2026-09" })).status, 409);
       const beforeGoal = await request(api, ALICE_TOKEN, "GET", `${path}/summary`);
       equal(((await beforeGoal.json()) as { personal: { hasGoal: boolean } }).personal.hasGoal, false);
-      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-10" });
-      const effective = await goal.json() as { carryoverKm: number; effectiveGoalKm: number };
+      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 2000, expectedMonth: "2026-10" });
+      equal(goal.status, 200);
+      const effective = await goal.json() as MonthlyGoal;
+      equal(effective.baseGoalKm, 2000);
       equal(effective.carryoverKm, 11.5);
-      equal(effective.effectiveGoalKm, 21.5);
+      equal(effective.effectiveGoalKm, 2011.5);
     } finally {
       await api.close();
       await rm(directory, { recursive: true, force: true });
