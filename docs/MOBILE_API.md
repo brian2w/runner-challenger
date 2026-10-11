@@ -24,11 +24,11 @@ All `/v1` requests require `Authorization: Bearer <token>`. Bodies are JSON with
 | GET | `/health` | - | `{ "ok": true }`, no token needed |
 | GET | `/v1/me` | - | Test account ID and joined squads |
 | POST | `/v1/squads` | `{ "name", "timezone", "displayName" }` | Creates a squad and joins its creator |
-| POST | `/v1/squads/:id/invites` | - | New random `inviteCode` and `expiresAt` |
+| POST | `/v1/squads/:id/invites` | `{ "clientInviteId" }` (optional for older clients) | New `inviteCode` and `expiresAt`; an identical retry returns the same code |
 | POST | `/v1/squads/:id/invites/revoke` | `{ "inviteCode" }` | Revokes an invite from this squad |
 | POST | `/v1/squads/join` | `{ "inviteCode", "displayName" }` | Joins the invite's squad |
 | GET | `/v1/squads/:id/summary` | - | `squad`, `month`, `member`, `personal`, `group`, `leaderboard`, `runs` |
-| PUT | `/v1/squads/:id/goal` | `{ "baseGoalKm" }` | Saves the signed-in member's goal and returns the effective goal |
+| PUT | `/v1/squads/:id/goal` | `{ "baseGoalKm", "expectedMonth" }` (`expectedMonth` optional for older clients) | Saves the signed-in member's goal and returns the effective goal; returns 409 if the checked month has changed |
 | POST | `/v1/squads/:id/runs` | See below | Logs one proof-backed run |
 | GET | `/v1/squads/:id/runs/receipt?month=YYYY-MM&clientRunId=...` | - | The signed-in member's matching run, or `{ "run": null }` |
 | GET | `/v1/squads/:id/runs/:runId/proof` | - | Screenshot bytes for the uploader only |
@@ -37,7 +37,11 @@ All `/v1` requests require `Authorization: Bearer <token>`. Bodies are JSON with
 
 Monthly base goals must be 0.01 to 2,000 km with at most two decimal places. Carryover is added separately, so the effective goal may exceed 2,000 km. Individual runs remain limited to 500 km.
 
-Invites are separate from workspace IDs. A code has 128 random bits, is stored only as a SHA-256 hash, expires after 24 hours, and may be revoked by a squad member. Any member may create or revoke an invite they know. An invite does not authenticate a user; the recipient still needs a configured bearer token.
+Mobile clients should send the `expectedMonth` from the summary they checked before saving a goal. The server rejects a stale month with 409 instead of writing the goal into a new month. Older clients may omit this field.
+
+Invites are separate from workspace IDs. A code is 128 bits long, is stored only as a SHA-256 hash, expires after 24 hours, and may be revoked by a squad member. Any member may create or revoke an invite they know. An invite does not authenticate a user; the recipient still needs a configured bearer token. Mobile clients should generate one random `clientInviteId` (8 to 80 URL-safe characters), retain it before sending the request, and reuse it if the response is lost. The same account, squad, and ID return the original code and expiry, including after an API restart; a revoked or expired request returns 409 instead of issuing a new code. Requests without a body still create a fresh random code for older clients.
+
+The invite snapshot also stores a private random derivation key so retries remain stable when bearer tokens rotate. Keep this key with the invite records when backing up or restoring the API. Existing invite snapshots are upgraded on their next write, preserving previously issued codes for joining and revoking.
 
 ### Run submission
 

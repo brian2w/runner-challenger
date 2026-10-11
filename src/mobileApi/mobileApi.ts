@@ -76,7 +76,7 @@ function validTimezone(timezone: string): boolean {
   }
 }
 
-async function readJson(request: IncomingMessage): Promise<JsonObject> {
+async function readJson(request: IncomingMessage, allowEmpty = false): Promise<JsonObject> {
   if (!request.headers["content-type"]?.startsWith("application/json")) {
     throw new ApiError(415, "Content-Type must be application/json.");
   }
@@ -92,9 +92,11 @@ async function readJson(request: IncomingMessage): Promise<JsonObject> {
     if (total > MAX_JSON_BYTES) throw new ApiError(413, "Request body is too large.");
     chunks.push(bytes);
   }
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (allowEmpty && !raw.trim()) return {};
   let value: unknown;
   try {
-    value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    value = JSON.parse(raw);
   } catch {
     throw new ApiError(400, "Request body must be valid JSON.");
   }
@@ -256,7 +258,22 @@ export function createMobileApi(options: MobileApiOptions) {
     const workspaceId = path[2];
     const { workspace, member } = await membership(workspaceId, actor);
     if (request.method === "POST" && path.length === 4 && path[3] === "invites") {
-      const inviteCode = randomBytes(16).toString("base64url");
+      const body = request.headers["content-type"]?.startsWith("application/json") ? await readJson(request, true) : {};
+      const clientInviteId = body.clientInviteId === undefined ? null : requiredString(body, "clientInviteId", 80);
+      if (clientInviteId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientInviteId)) {
+        throw new ApiError(400, "clientInviteId must use 8 to 80 letters, digits, hyphens, or underscores.");
+      }
+      const inviteCode = clientInviteId
+        ? options.inviteStore.codeForRequest(actor, workspaceId, clientInviteId)
+        : randomBytes(16).toString("base64url");
+      const existing = await options.inviteStore.get(inviteCode);
+      if (existing) {
+        if (existing.workspaceId !== workspaceId || existing.revokedAt || now().getTime() >= Date.parse(existing.expiresAt)) {
+          throw new ApiError(409, "This invite request has expired or been revoked. Start a new invite.");
+        }
+        sendJson(response, 200, { inviteCode, expiresAt: existing.expiresAt });
+        return;
+      }
       const expiresAt = new Date(now().getTime() + INVITE_LIFETIME_MS).toISOString();
       await options.inviteStore.save({ codeHash: hashInviteCode(inviteCode), workspaceId, expiresAt });
       sendJson(response, 201, { inviteCode, expiresAt });
@@ -291,7 +308,15 @@ export function createMobileApi(options: MobileApiOptions) {
     if (request.method === "PUT" && path.length === 4 && path[3] === "goal") {
       const body = await readJson(request);
       const baseGoalKm = requiredDistance(body, "baseGoalKm", 2000);
-      const goal = await service.setGoal({ workspaceId, month: await ensureMonth(workspace), memberId: member.id, baseGoalKm });
+      const expectedMonth = body.expectedMonth === undefined ? null : requiredString(body, "expectedMonth", 7);
+      if (expectedMonth && !/^\d{4}-(0[1-9]|1[0-2])$/.test(expectedMonth)) {
+        throw new ApiError(400, "expectedMonth must be a YYYY-MM month.");
+      }
+      const month = await ensureMonth(workspace);
+      if (expectedMonth && expectedMonth !== month) {
+        throw new ApiError(409, "The squad month changed. Refresh your goal before saving.");
+      }
+      const goal = await service.setGoal({ workspaceId, month, memberId: member.id, baseGoalKm });
       sendJson(response, 200, goal);
       return;
     }

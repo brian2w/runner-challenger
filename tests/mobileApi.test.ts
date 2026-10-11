@@ -1,16 +1,17 @@
 import { deepEqual, equal, match, notEqual, ok, throws } from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { MemberMonthStatus, MonthlyGoal } from "../src/core/types.js";
-import { JsonInviteStore } from "../src/mobileApi/inviteStore.js";
+import { hashInviteCode, JsonInviteStore } from "../src/mobileApi/inviteStore.js";
 import { createMobileApi, parseApiUsers } from "../src/mobileApi/mobileApi.js";
 import { JsonFileChallengeRepository } from "../src/repositories/jsonFileChallengeRepository.js";
 
 const ALICE_TOKEN = "a".repeat(32);
 const BOB_TOKEN = "b".repeat(32);
 const CHARLIE_TOKEN = "c".repeat(32);
+const ALICE_ROTATED_TOKEN = "d".repeat(32);
 const PROOF_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+K26iAAAAAElFTkSuQmCC";
 
 type TestApi = {
@@ -19,7 +20,7 @@ type TestApi = {
   close: () => Promise<void>;
 };
 
-async function startApi(directory: string, clock: () => Date): Promise<TestApi> {
+async function startApi(directory: string, clock: () => Date, users = new Map([[ALICE_TOKEN, "alice"], [BOB_TOKEN, "bob"], [CHARLIE_TOKEN, "charlie"]])): Promise<TestApi> {
   const repository = new JsonFileChallengeRepository(join(directory, "challenge.json"));
   await repository.init();
   const inviteStore = new JsonInviteStore(join(directory, "invites.json"));
@@ -28,7 +29,7 @@ async function startApi(directory: string, clock: () => Date): Promise<TestApi> 
     repository,
     inviteStore,
     proofDirectory: join(directory, "proofs"),
-    users: new Map([[ALICE_TOKEN, "alice"], [BOB_TOKEN, "bob"], [CHARLIE_TOKEN, "charlie"]]),
+    users,
     now: clock,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -172,25 +173,76 @@ describe("mobile API", () => {
     }
   });
 
-  it("revokes and expires invite codes", async () => {
+  it("retries invites across token rotation and restarts, and respects revocation and expiry", async () => {
     const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
     let clock = new Date("2026-10-04T02:00:00Z");
-    const api = await startApi(directory, () => clock);
+    let api = await startApi(directory, () => clock, new Map([[ALICE_TOKEN, "alice"], [ALICE_ROTATED_TOKEN, "alice"], [BOB_TOKEN, "bob"]]));
     try {
       const created = await request(api, ALICE_TOKEN, "POST", "/v1/squads", { name: "Squad", timezone: "Australia/Sydney", displayName: "Alice" });
       const { squad } = await created.json() as { squad: { id: string } };
       const path = `/v1/squads/${encodeURIComponent(squad.id)}/invites`;
-      const first = await request(api, ALICE_TOKEN, "POST", path);
-      const { inviteCode: revokedCode } = await first.json() as { inviteCode: string };
+      const first = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(first.status, 201);
+      const issued = await first.json() as { inviteCode: string; expiresAt: string };
+      const { inviteCode: revokedCode } = issued;
+      const retry = await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(retry.status, 200);
+      deepEqual(await retry.json(), issued);
+      const otherToken = await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(otherToken.status, 200);
+      deepEqual(await otherToken.json(), issued);
+      await api.close();
+      api = await startApi(directory, () => clock, new Map([[ALICE_ROTATED_TOKEN, "alice"], [BOB_TOKEN, "bob"]]));
+      const afterRestart = await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(afterRestart.status, 200);
+      deepEqual(await afterRestart.json(), issued);
+      equal((await request(api, ALICE_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" })).status, 401);
+      equal((await request(api, ALICE_ROTATED_TOKEN, "POST", path, {})).status, 201);
+      equal((await fetch(`${api.baseUrl}${path}`, { method: "POST", headers: { Authorization: `Bearer ${ALICE_ROTATED_TOKEN}`, "Content-Type": "application/json" } })).status, 201);
+      equal((await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "short" })).status, 400);
       equal((await request(api, BOB_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 404);
-      equal((await request(api, ALICE_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 200);
+      equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode: revokedCode, displayName: "Bob" })).status, 200);
+      const otherAccount = await request(api, BOB_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" });
+      equal(otherAccount.status, 201);
+      notEqual(((await otherAccount.json()) as { inviteCode: string }).inviteCode, revokedCode);
+      const otherSquad = await request(api, ALICE_ROTATED_TOKEN, "POST", "/v1/squads", { name: "Other", timezone: "Australia/Sydney", displayName: "Alice" });
+      const otherSquadId = ((await otherSquad.json()) as { squad: { id: string } }).squad.id;
+      const otherInvite = await request(api, ALICE_ROTATED_TOKEN, "POST", `/v1/squads/${encodeURIComponent(otherSquadId)}/invites`, { clientInviteId: "invite-alice-001" });
+      equal(otherInvite.status, 201);
+      notEqual(((await otherInvite.json()) as { inviteCode: string }).inviteCode, revokedCode);
+      equal((await request(api, ALICE_ROTATED_TOKEN, "POST", `${path}/revoke`, { inviteCode: revokedCode })).status, 200);
+      equal((await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "invite-alice-001" })).status, 409);
       equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode: revokedCode, displayName: "Bob" })).status, 404);
-      const second = await request(api, ALICE_TOKEN, "POST", path);
+      const second = await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "invite-alice-002" });
       const { inviteCode: expiredCode } = await second.json() as { inviteCode: string };
       clock = new Date(clock.getTime() + 24 * 60 * 60 * 1000);
+      equal((await request(api, ALICE_ROTATED_TOKEN, "POST", path, { clientInviteId: "invite-alice-002" })).status, 409);
       equal((await request(api, BOB_TOKEN, "POST", "/v1/squads/join", { inviteCode: expiredCode, displayName: "Bob" })).status, 404);
+      const persisted = await readFile(join(directory, "invites.json"), "utf8");
+      for (const secret of [revokedCode, expiredCode, ALICE_TOKEN, ALICE_ROTATED_TOKEN]) ok(!persisted.includes(secret));
     } finally {
       await api.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves legacy invite records when persisting the retry key", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "momentum-mobile-api-"));
+    const filePath = join(directory, "invites.json");
+    const legacy = { codeHash: hashInviteCode("legacy-code"), workspaceId: "squad", expiresAt: "2026-10-05T00:00:00.000Z" };
+    try {
+      await writeFile(filePath, JSON.stringify([legacy]));
+      const store = new JsonInviteStore(filePath);
+      await store.init();
+      deepEqual(await store.get("legacy-code"), legacy);
+      const code = store.codeForRequest("alice", "squad", "invite-alice-001");
+      await store.save({ ...legacy, codeHash: hashInviteCode(code) });
+      const restarted = new JsonInviteStore(filePath);
+      await restarted.init();
+      deepEqual(await restarted.get("legacy-code"), legacy);
+      equal(restarted.codeForRequest("alice", "squad", "invite-alice-001"), code);
+      deepEqual(await restarted.get(code), { ...legacy, codeHash: hashInviteCode(code) });
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -244,7 +296,11 @@ describe("mobile API", () => {
       equal(previous?.closedAt, "2026-09-30T15:00:00.000Z");
       deepEqual((await api.repository.listMonthlyResultsByChallenge(previous!.id)).map((result) => result.memberId), [member.id]);
       equal((await api.repository.getChallengeByMonth(squad.id, "2026-10"))?.createdAt, "2026-09-30T15:00:00.000Z");
-      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 2000 });
+      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 10, expectedMonth: "2026-13" })).status, 400);
+      equal((await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 2000, expectedMonth: "2026-09" })).status, 409);
+      const beforeGoal = await request(api, ALICE_TOKEN, "GET", `${path}/summary`);
+      equal(((await beforeGoal.json()) as { personal: { hasGoal: boolean } }).personal.hasGoal, false);
+      const goal = await request(api, ALICE_TOKEN, "PUT", `${path}/goal`, { baseGoalKm: 2000, expectedMonth: "2026-10" });
       equal(goal.status, 200);
       const effective = await goal.json() as MonthlyGoal;
       equal(effective.baseGoalKm, 2000);
