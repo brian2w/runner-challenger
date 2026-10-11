@@ -1,6 +1,7 @@
 import { deepEqual } from "node:assert/strict";
 import { describe, it } from "node:test";
 import { extractRunProofFields } from "../src/services/runProofExtraction.js";
+import { suggestRunProofFields } from "../packages/run-proof/index.js";
 
 describe("extractRunProofFields", () => {
   it("extracts distance and ISO date from OCR text", () => {
@@ -83,6 +84,45 @@ describe("extractRunProofFields", () => {
     deepEqual(result, {
       distanceKm: 5.06,
       runDate: "2026-07-18",
+    });
+  });
+});
+
+describe("suggestRunProofFields", () => {
+  it("suggests one distinct kilometer distance and full date", () => {
+    deepEqual(suggestRunProofFields("Distance\n5,24 km\nOctober 18, 2026\n5.24 km"), {
+      distanceKm: 5.24,
+      runDate: "2026-10-18",
+    });
+    for (const date of ["2026-10-18", "18 October 2026", "18/10/2026", "10/18/2026", "10/10/2026"]) {
+      deepEqual(suggestRunProofFields(date), { runDate: date === "10/10/2026" ? "2026-10-10" : "2026-10-18" });
+    }
+  });
+
+  it("keeps a full date ahead of relative labels without inventing missing dates", () => {
+    deepEqual(suggestRunProofFields("Yesterday\nDistance 5 km\n18 Oct 2026"), {
+      distanceKm: 5,
+      runDate: "2026-10-18",
+    });
+    for (const date of ["Today", "Yesterday", "18 Oct", "Oct 18", "05/07/2026", "2026-02-30"]) {
+      deepEqual(suggestRunProofFields(`Distance 5 km\n${date}`), { distanceKm: 5 });
+    }
+  });
+
+  it("abstains only for the conflicting field", () => {
+    deepEqual(suggestRunProofFields("Distance 5 km\nLap 1 km\n2026-10-18"), { runDate: "2026-10-18" });
+    deepEqual(suggestRunProofFields("Distance 5 km\n2026-10-18\n19 Oct 2026"), { distanceKm: 5 });
+    deepEqual(suggestRunProofFields("Distance 5 km\n2026-10-18\n2026-02-30"), { distanceKm: 5 });
+  });
+
+  it("does not repair invalid distances or convert unsupported units", () => {
+    for (const distance of ["0 km", "501 km", "5.245 km", "-5 km", "1e2 km", "1,234.5 km", "3.1 mi", "500 m", "5:30 /km", "Average speed 12 km/h", "12 km / hr", "12 km/hour", "12 km per hour"]) {
+      deepEqual(suggestRunProofFields(`${distance}\n2026-10-18`), { runDate: "2026-10-18" });
+    }
+    deepEqual(suggestRunProofFields("5 km\n501 km\n2026-10-18"), { runDate: "2026-10-18" });
+    deepEqual(suggestRunProofFields("Distance 5 km\nAverage speed 12 km/h\n2026-10-18"), {
+      distanceKm: 5,
+      runDate: "2026-10-18",
     });
   });
 });

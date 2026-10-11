@@ -1,0 +1,19 @@
+{
+  "name": "@momentum/run-proof",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency-free run screenshot text extraction shared by Momentum adapters.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "index.ts"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  }
+}
