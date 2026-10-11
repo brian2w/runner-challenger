@@ -35,6 +35,8 @@ All `/v1` requests require `Authorization: Bearer <token>`. Bodies are JSON with
 
 `timezone` must be an IANA timezone such as `Australia/Sydney`. The server chooses the challenge month and current date in that timezone. On the first request after a month changes, it closes the immediately previous open month before starting the new one. A squad inactive for multiple whole months needs a later catch-up workflow.
 
+Monthly base goals must be 0.01 to 2,000 km with at most two decimal places. Carryover is added separately, so the effective goal may exceed 2,000 km. Individual runs remain limited to 500 km.
+
 Invites are separate from workspace IDs. A code has 128 random bits, is stored only as a SHA-256 hash, expires after 24 hours, and may be revoked by a squad member. Any member may create or revoke an invite they know. An invite does not authenticate a user; the recipient still needs a configured bearer token.
 
 ### Run submission
