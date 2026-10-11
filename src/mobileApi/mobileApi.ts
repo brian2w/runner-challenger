@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -150,13 +150,13 @@ export function createMobileApi(options: MobileApiOptions) {
   const preparedMonths = new Set<string>();
   let queue: Promise<void> = Promise.resolve();
 
-  function actorFor(request: IncomingMessage): { actor: string; token: string } {
+  function actorFor(request: IncomingMessage): string {
     const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(request.headers.authorization ?? "");
     if (!match) throw new ApiError(401, "Bearer token required.");
     const supplied = Buffer.from(match[1]);
     for (const [token, accountId] of options.users) {
       const candidate = Buffer.from(token);
-      if (candidate.length === supplied.length && timingSafeEqual(candidate, supplied)) return { actor: accountId, token: match[1] };
+      if (candidate.length === supplied.length && timingSafeEqual(candidate, supplied)) return accountId;
     }
     throw new ApiError(401, "Invalid bearer token.");
   }
@@ -212,7 +212,7 @@ export function createMobileApi(options: MobileApiOptions) {
       sendJson(response, 200, { ok: true });
       return;
     }
-    const { actor, token } = actorFor(request);
+    const actor = actorFor(request);
     if (request.method === "GET" && url.pathname === "/v1/me") {
       const squads = [];
       for (const workspace of await options.repository.listWorkspaces()) {
@@ -260,7 +260,7 @@ export function createMobileApi(options: MobileApiOptions) {
         throw new ApiError(400, "clientInviteId must use 8 to 80 letters, digits, hyphens, or underscores.");
       }
       const inviteCode = clientInviteId
-        ? createHmac("sha256", token).update(JSON.stringify(["momentum-invite-v1", actor, workspaceId, clientInviteId])).digest().subarray(0, 16).toString("base64url")
+        ? options.inviteStore.codeForRequest(actor, workspaceId, clientInviteId)
         : randomBytes(16).toString("base64url");
       const existing = await options.inviteStore.get(inviteCode);
       if (existing) {

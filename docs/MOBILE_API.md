@@ -38,6 +38,8 @@ Mobile clients should send the `expectedMonth` from the summary they checked bef
 
 Invites are separate from workspace IDs. A code is 128 bits long, is stored only as a SHA-256 hash, expires after 24 hours, and may be revoked by a squad member. Any member may create or revoke an invite they know. An invite does not authenticate a user; the recipient still needs a configured bearer token. Mobile clients should generate one random `clientInviteId` (8 to 80 URL-safe characters), retain it before sending the request, and reuse it if the response is lost. The same account, squad, and ID return the original code and expiry, including after an API restart; a revoked or expired request returns 409 instead of issuing a new code. Requests without a body still create a fresh random code for older clients.
 
+The invite snapshot also stores a private random derivation key so retries remain stable when bearer tokens rotate. Keep this key with the invite records when backing up or restoring the API. Existing invite snapshots are upgraded on their next write, preserving previously issued codes for joining and revoking.
+
 ### Run submission
 
 ```json
